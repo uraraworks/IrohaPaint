@@ -20,6 +20,7 @@ import { loadProgress, saveProgress } from "./core/progress.ts";
 import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
+import { SOUND_OFF_SVG, SOUND_ON_SVG } from "./ui/icons.ts";
 
 /** 描き終わってから保存するまでの待ち時間。描画中に保存すると重い。 */
 const AUTOSAVE_DELAY_MS = 800;
@@ -166,11 +167,12 @@ class App {
   private buildSoundToggle(): void {
     const button = document.createElement("button");
     button.className = "sound-toggle";
-    button.textContent = "🔊";
+    button.innerHTML = SOUND_ON_SVG;
     button.setAttribute("aria-label", "おとの おんおふ");
     button.addEventListener("click", () => {
       this.sound.setEnabled(!this.sound.isEnabled);
-      button.textContent = this.sound.isEnabled ? "🔊" : "🔇";
+      button.innerHTML = this.sound.isEnabled ? SOUND_ON_SVG : SOUND_OFF_SVG;
+      // 切った直後は鳴らない。切り替わったことは見た目で分かる。
       this.sound.play("poko");
     });
     this.stage.appendChild(button);

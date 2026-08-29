@@ -95,8 +95,17 @@ body {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.9);
   box-shadow: var(--shadow);
-  font-size: 24px;
   cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.sound-toggle:active {
+  transform: scale(0.88);
+}
+
+.sound-toggle svg {
+  width: 32px;
+  height: 32px;
 }
 
 /* --- ツールバー --- */
