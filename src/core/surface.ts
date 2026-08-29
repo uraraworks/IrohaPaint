@@ -17,6 +17,26 @@ export interface StrokeStyle {
   dynamics?: NibDynamics;
 }
 
+/** 1 本ぶんの描画状態。指(pointerId)ごとに独立して持つ。 */
+interface StrokeState {
+  style: StrokeStyle;
+  dynamics: NibDynamics;
+  dirty: DirtyRect;
+  /** 手ブレ補正後の現在位置。 */
+  smoothX: number;
+  smoothY: number;
+  lastTime: number;
+  /** 直前に実際に描いた点。 */
+  lastX: number;
+  lastY: number;
+  lastWidth: number;
+  travelled: number;
+  pending: PendingPoint[];
+  drewAnything: boolean;
+  /** 仮インクを描いた範囲(消すときに使う)。 */
+  overlayDirty: FillRect | null;
+}
+
 /** 描画待ちの点。入り抜きのために、線の末尾は少しだけ描かずに保持する。 */
 interface PendingPoint {
   x: number;
@@ -49,24 +69,11 @@ export class Surface {
    */
   readonly overlay: HTMLCanvasElement;
   private readonly overlayCtx: CanvasRenderingContext2D;
-  private overlayDirty: FillRect | null = null;
   private patches: UndoPatch[] = [];
   /** 「戻る」で巻き戻した分。新しく描いたら捨てる(一般的なペイントと同じ作法)。 */
   private redoPatches: UndoPatch[] = [];
-  private dirty: DirtyRect | null = null;
-  private strokeStyle: StrokeStyle | null = null;
-  private dynamics: NibDynamics = NIB_DEFS.crayon.dynamics;
-  /** 手ブレ補正後の現在位置。 */
-  private smoothX = 0;
-  private smoothY = 0;
-  private lastTime = 0;
-  /** 直前に実際に描いた点。 */
-  private lastX = 0;
-  private lastY = 0;
-  private lastWidth = 0;
-  private travelled = 0;
-  private pending: PendingPoint[] = [];
-  private drewAnything = false;
+  /** 描いている最中の線。pointerId をキーにするので、何人が同時に描いても混ざらない。 */
+  private readonly strokes = new Map<number, StrokeState>();
 
   constructor(canvas: HTMLCanvasElement) {
     canvas.width = CANVAS_WIDTH;
@@ -109,87 +116,160 @@ export class Surface {
   }
 
   // --- ストローク -------------------------------------------------------
+  //
+  // 同時に何本も描ける(「みんなで描く」モード)。1 本ごとの状態は StrokeState に閉じ込め、
+  // pointerId をキーに持つ。1 人で使うときも同じ経路を通る(本数が 1 本なだけ)。
 
-  beginStroke(x: number, y: number, style: StrokeStyle, time = 0, pressure?: number): void {
-    this.strokeStyle = style;
-    this.dynamics = style.dynamics ?? NIB_DEFS.crayon.dynamics;
-    this.dirty = new DirtyRect();
-    this.smoothX = x;
-    this.smoothY = y;
-    this.lastTime = time;
-    this.lastX = x;
-    this.lastY = y;
-    this.lastWidth = style.size;
-    this.travelled = 0;
-    this.drewAnything = false;
-    // 入り抜きのある先端は、描き終わりが分かるまで描けない。
-    // 末尾を少しだけ保持しておき、endStroke でまとめて細らせながら描く。
-    this.pending = [{ x, y, speed: 0, pressure, distance: 0 }];
-    this.dirty.add(x, y, style.size * this.dynamics.maxWidthRatio);
+  beginStroke(
+    id: number,
+    x: number,
+    y: number,
+    style: StrokeStyle,
+    time = 0,
+    pressure?: number,
+  ): void {
+    const dynamics = style.dynamics ?? NIB_DEFS.crayon.dynamics;
+    const dirty = new DirtyRect();
+    dirty.add(x, y, style.size * dynamics.maxWidthRatio);
+    this.strokes.set(id, {
+      style,
+      dynamics,
+      dirty,
+      smoothX: x,
+      smoothY: y,
+      lastTime: time,
+      lastX: x,
+      lastY: y,
+      lastWidth: style.size,
+      travelled: 0,
+      drewAnything: false,
+      overlayDirty: null,
+      // 入り抜きのある先端は、描き終わりが分かるまで描けない。
+      // 末尾を少しだけ保持しておき、endStroke でまとめて細らせながら描く。
+      pending: [{ x, y, speed: 0, pressure, distance: 0 }],
+    });
   }
 
-  extendStroke(x: number, y: number, time = 0, pressure?: number): void {
-    const style = this.strokeStyle;
-    if (style === null || this.dirty === null) return;
+  extendStroke(id: number, x: number, y: number, time = 0, pressure?: number): void {
+    const stroke = this.strokes.get(id);
+    if (stroke === undefined) return;
 
     // 手ブレ補正。指の細かい揺れを吸収する。数フレームぶん遅れるが、
     // 線の見た目が落ち着く効果の方がはるかに大きい。
-    const alpha = 1 - this.dynamics.smoothing;
-    const prevX = this.smoothX;
-    const prevY = this.smoothY;
-    this.smoothX += (x - this.smoothX) * alpha;
-    this.smoothY += (y - this.smoothY) * alpha;
+    const alpha = 1 - stroke.dynamics.smoothing;
+    const prevX = stroke.smoothX;
+    const prevY = stroke.smoothY;
+    stroke.smoothX += (x - stroke.smoothX) * alpha;
+    stroke.smoothY += (y - stroke.smoothY) * alpha;
 
-    const step = Math.hypot(this.smoothX - prevX, this.smoothY - prevY);
+    const step = Math.hypot(stroke.smoothX - prevX, stroke.smoothY - prevY);
     if (step < 0.01) return;
     // 端末やイベントの詰まりで dt が壊れても速さが暴れないよう範囲を絞る。
-    const dt = Math.min(100, Math.max(1, time - this.lastTime));
-    this.lastTime = time;
-    this.travelled += step;
-    this.pending.push({
-      x: this.smoothX,
-      y: this.smoothY,
+    const dt = Math.min(100, Math.max(1, time - stroke.lastTime));
+    stroke.lastTime = time;
+    stroke.travelled += step;
+    stroke.pending.push({
+      x: stroke.smoothX,
+      y: stroke.smoothY,
       speed: step / dt,
       pressure,
-      distance: this.travelled,
+      distance: stroke.travelled,
     });
-    this.dirty.add(this.smoothX, this.smoothY, style.size * this.dynamics.maxWidthRatio);
+    stroke.dirty.add(stroke.smoothX, stroke.smoothY, stroke.style.size * stroke.dynamics.maxWidthRatio);
 
     // 末尾(抜きに使う長さ)より古い点は、もう細らせる必要がないので確定して描く。
-    while (this.pending.length > 1) {
-      const head = this.pending[0] as PendingPoint;
-      if (this.travelled - head.distance <= this.dynamics.taperOutPx) break;
-      this.pending.shift();
-      this.renderPoint(head, Number.POSITIVE_INFINITY, style);
+    while (stroke.pending.length > 1) {
+      const head = stroke.pending[0] as PendingPoint;
+      if (stroke.travelled - head.distance <= stroke.dynamics.taperOutPx) break;
+      stroke.pending.shift();
+      this.renderPoint(stroke, head, Number.POSITIVE_INFINITY);
     }
-    this.drawWetInk(style);
+    this.drawWetInk(stroke);
+  }
+
+  /** 描きかけを無かったことにする(ピンチに移った時)。id 省略で全部。 */
+  cancelStroke(id?: number): void {
+    const targets = id === undefined ? [...this.strokes.keys()] : [id];
+    for (const key of targets) {
+      const stroke = this.strokes.get(key);
+      if (stroke === undefined) continue;
+      this.clearWetInk(stroke);
+      this.strokes.delete(key);
+      const rect = stroke.dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
+      if (rect === null) continue;
+      // 控え(1 手前の状態)から描き戻すので、undo 履歴は消費しない。
+      this.ctx.globalCompositeOperation = "source-over";
+      this.ctx.clearRect(rect.x, rect.y, rect.width, rect.height);
+      this.ctx.drawImage(
+        this.backup,
+        rect.x, rect.y, rect.width, rect.height,
+        rect.x, rect.y, rect.width, rect.height,
+      );
+    }
+  }
+
+  /** ストロークを確定する。戻り値は変更矩形。 */
+  endStroke(id: number, rawX?: number, rawY?: number): FillRect | null {
+    const stroke = this.strokes.get(id);
+    if (stroke === undefined) return null;
+    this.strokes.delete(id);
+    this.clearWetInk(stroke);
+
+    // 手ブレ補正の分だけ描画点は指より後ろにいる。離した位置まで最後に伸ばして
+    // 「線が指まで届かない」感じを消す。
+    const last = stroke.pending[stroke.pending.length - 1];
+    if (rawX !== undefined && rawY !== undefined && last !== undefined) {
+      const step = Math.hypot(rawX - last.x, rawY - last.y);
+      if (step > 0.5) {
+        stroke.travelled += step;
+        stroke.pending.push({
+          x: rawX,
+          y: rawY,
+          speed: last.speed,
+          pressure: last.pressure,
+          distance: stroke.travelled,
+        });
+        stroke.dirty.add(rawX, rawY, stroke.style.size * stroke.dynamics.maxWidthRatio);
+      }
+    }
+
+    // 残しておいた末尾を、終端に近づくほど細くしながら描く。
+    for (const point of stroke.pending) {
+      this.renderPoint(stroke, point, stroke.travelled - point.distance);
+    }
+    // 「ちょん」と置いただけの点も必ず残す(子どもは点を打つ)。
+    if (!stroke.drewAnything) {
+      const width = Math.max(2, stroke.style.size * (stroke.style.dynamics === undefined ? 1 : 0.6));
+      this.paintDot(stroke.lastX, stroke.lastY, width, stroke.style);
+    }
+    return stroke.dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
   }
 
   /** 保持中の末尾を仮のインクとして描く。指に線が遅れてついてくるのを防ぐ。 */
-  private drawWetInk(style: StrokeStyle): void {
-    this.clearWetInk();
+  private drawWetInk(stroke: StrokeState): void {
+    this.clearWetInk(stroke);
     // 消しゴムは「消えた結果」を重ねて見せられないので仮インクを出さない
     // (太さ一定なので末尾を保持しておらず、そもそも遅れない)。
-    if (style.erase || this.pending.length === 0 || this.dynamics.taperOutPx <= 0) return;
+    if (stroke.style.erase || stroke.pending.length === 0 || stroke.dynamics.taperOutPx <= 0) return;
 
     const ctx = this.overlayCtx;
     ctx.save();
-    ctx.strokeStyle = style.color;
+    ctx.strokeStyle = stroke.style.color;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    let prevX = this.lastX;
-    let prevY = this.lastY;
-    let prevWidth = this.lastWidth;
+    let prevX = stroke.lastX;
+    let prevY = stroke.lastY;
+    let prevWidth = stroke.lastWidth;
     let minX = prevX;
     let minY = prevY;
     let maxX = prevX;
     let maxY = prevY;
     let maxWidth = prevWidth;
-    for (const point of this.pending) {
+    for (const point of stroke.pending) {
       // 抜きはまだ掛けない(掛けると、描いている最中だけ細く見えてしまう)。
       const width = strokeWidth(
-        style.size,
-        this.dynamics,
+        stroke.style.size,
+        stroke.dynamics,
         point.speed,
         point.pressure,
         point.distance,
@@ -214,7 +294,7 @@ export class Surface {
     const pad = Math.ceil(maxWidth) + 2;
     const x = Math.max(0, Math.floor(minX - pad));
     const y = Math.max(0, Math.floor(minY - pad));
-    this.overlayDirty = {
+    stroke.overlayDirty = {
       x,
       y,
       width: Math.min(CANVAS_WIDTH, Math.ceil(maxX + pad)) - x,
@@ -222,97 +302,38 @@ export class Surface {
     };
   }
 
-  private clearWetInk(): void {
-    const rect = this.overlayDirty;
+  private clearWetInk(stroke: StrokeState): void {
+    const rect = stroke.overlayDirty;
     if (rect === null) return;
     this.overlayCtx.clearRect(rect.x, rect.y, rect.width, rect.height);
-    this.overlayDirty = null;
-  }
-
-  /**
-   * 描きかけの線を無かったことにする(ピンチに移行した時)。
-   * 控え(1 手前の状態)から描き戻すので、undo 履歴は消費しない。
-   */
-  cancelStroke(): void {
-    this.clearWetInk();
-    const dirty = this.dirty;
-    this.dirty = null;
-    this.strokeStyle = null;
-    this.pending = [];
-    if (dirty === null) return;
-    const rect = dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
-    if (rect === null) return;
-    this.ctx.globalCompositeOperation = "source-over";
-    this.ctx.clearRect(rect.x, rect.y, rect.width, rect.height);
-    this.ctx.drawImage(
-      this.backup,
-      rect.x, rect.y, rect.width, rect.height,
-      rect.x, rect.y, rect.width, rect.height,
-    );
-  }
-
-  /** ストロークを確定し、undo 用に変更前の画素を積む。戻り値は変更矩形。 */
-  endStroke(rawX?: number, rawY?: number): FillRect | null {
-    // 手ブレ補正の分だけ描画点は指より後ろにいる。離した位置まで最後に伸ばして
-    // 「線が指まで届かない」感じを消す。
-    if (rawX !== undefined && rawY !== undefined && this.strokeStyle !== null) {
-      const last = this.pending[this.pending.length - 1];
-      const step = last === undefined ? 0 : Math.hypot(rawX - last.x, rawY - last.y);
-      if (last !== undefined && step > 0.5) {
-        this.travelled += step;
-        this.pending.push({
-          x: rawX,
-          y: rawY,
-          speed: last.speed,
-          pressure: last.pressure,
-          distance: this.travelled,
-        });
-        this.dirty?.add(rawX, rawY, this.strokeStyle.size * this.dynamics.maxWidthRatio);
-      }
-    }
-    return this.finishStroke();
-  }
-
-  private finishStroke(): FillRect | null {
-    this.clearWetInk();
-    const dirty = this.dirty;
-    const style = this.strokeStyle;
-    if (dirty !== null && style !== null) {
-      // 残しておいた末尾を、終端に近づくほど細くしながら描く。
-      for (const point of this.pending) {
-        this.renderPoint(point, this.travelled - point.distance, style);
-      }
-      // 「ちょん」と置いただけの点も必ず残す(子どもは点を打つ)。
-      if (!this.drewAnything) {
-        const width = Math.max(2, style.size * (style.dynamics === undefined ? 1 : 0.6));
-        this.paintDot(this.lastX, this.lastY, width, style);
-      }
-    }
-    this.pending = [];
-    this.dirty = null;
-    this.strokeStyle = null;
-    if (dirty === null) return null;
-    return dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
+    stroke.overlayDirty = null;
   }
 
   /** 1 点ぶんを、直前の点からの線として描く。 */
-  private renderPoint(point: PendingPoint, distanceFromEnd: number, style: StrokeStyle): void {
+  private renderPoint(stroke: StrokeState, point: PendingPoint, distanceFromEnd: number): void {
     const width = strokeWidth(
-      style.size,
-      this.dynamics,
+      stroke.style.size,
+      stroke.dynamics,
       point.speed,
       point.pressure,
       point.distance,
       distanceFromEnd,
     );
-    if (point.x !== this.lastX || point.y !== this.lastY) {
+    if (point.x !== stroke.lastX || point.y !== stroke.lastY) {
       // 太さは点ごとに変わるので、区間の平均で描く。区間が短いので段差は見えない。
-      this.paintLine(this.lastX, this.lastY, point.x, point.y, (this.lastWidth + width) / 2, style);
-      this.drewAnything = true;
+      this.paintLine(
+        stroke.lastX,
+        stroke.lastY,
+        point.x,
+        point.y,
+        (stroke.lastWidth + width) / 2,
+        stroke.style,
+      );
+      stroke.drewAnything = true;
     }
-    this.lastX = point.x;
-    this.lastY = point.y;
-    this.lastWidth = width;
+    stroke.lastX = point.x;
+    stroke.lastY = point.y;
+    stroke.lastWidth = width;
   }
 
   private paintLine(
@@ -348,21 +369,40 @@ export class Surface {
     ctx.restore();
   }
 
+
   // --- undo -------------------------------------------------------------
 
   /**
    * 変更を 1 手として確定する。*描き終わったあと* に、変更矩形を渡して呼ぶ。
    * 変更前の画素は控え(backup)から拾い、そのあと控えを現状に合わせる。
    */
-  commit(rect: FillRect): void {
-    const before = this.backupCtx.getImageData(rect.x, rect.y, rect.width, rect.height);
-    this.patches = trimPatches([...this.patches, { ...rect, before }]);
-    // 巻き戻した先から描き直したら、その先の未来は無くなる。
-    this.redoPatches = [];
+  /**
+   * 変更を 1 手として確定する。*描き終わったあと* に、変更矩形を渡して呼ぶ。
+   *
+   * history=false のときは控えを現状に合わせるだけで履歴に積まない。
+   * 「みんなで描く」モードは複数人が同時に描くので「戻る」自体を持たない
+   * (誰の 1 手を戻すのか決められず、他の子の線が消える事故になる)。
+   */
+  commit(rect: FillRect, history = true): void {
+    if (history) {
+      const before = this.backupCtx.getImageData(rect.x, rect.y, rect.width, rect.height);
+      this.patches = trimPatches([...this.patches, { ...rect, before }]);
+      // 巻き戻した先から描き直したら、その先の未来は無くなる。
+      this.redoPatches = [];
+    } else {
+      this.patches = [];
+      this.redoPatches = [];
+    }
     this.syncBackup(rect);
   }
 
   /** 控えの指定矩形を現在のキャンバスで置き換える。消しゴム跡(透明)も含めて写す。 */
+  /** 仮インクを全部消す(作品の切り替え・やり直し時)。 */
+  private clearOverlay(): void {
+    this.overlayCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    for (const stroke of this.strokes.values()) stroke.overlayDirty = null;
+  }
+
   private syncBackup(rect: FillRect): void {
     this.backupCtx.globalCompositeOperation = "source-over";
     this.backupCtx.clearRect(rect.x, rect.y, rect.width, rect.height);
@@ -371,6 +411,12 @@ export class Surface {
       rect.x, rect.y, rect.width, rect.height,
       rect.x, rect.y, rect.width, rect.height,
     );
+  }
+
+  /** 履歴を捨てる(「みんなで描く」モードへ入るとき)。絵はそのまま。 */
+  dropHistory(): void {
+    this.patches = [];
+    this.redoPatches = [];
   }
 
   undo(): boolean {
@@ -466,10 +512,11 @@ export class Surface {
 
   /** まっさらな紙に戻す(あたらしく描く)。履歴も捨てる。 */
   reset(): void {
-    this.clearWetInk();
+    this.clearOverlay();
     this.clearToPaper();
     this.patches = [];
     this.redoPatches = [];
+    this.strokes.clear();
     this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
   }
 
@@ -485,6 +532,7 @@ export class Surface {
     }
     this.patches = [];
     this.redoPatches = [];
+    this.strokes.clear();
     this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
   }
 }

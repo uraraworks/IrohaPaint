@@ -32,11 +32,12 @@ export interface GestureChange {
 }
 
 export interface PointerHandlers {
-  onDown: (point: CanvasPoint) => void;
-  onMove: (point: CanvasPoint) => void;
-  onUp: () => void;
-  /** 2 本目の指が触れた。描きかけを取り消す。 */
-  onGestureStart?: () => void;
+  /** id は pointerId。「みんなで描く」モードでは複数の id が同時に動く。 */
+  onDown: (id: number, point: CanvasPoint) => void;
+  onMove: (id: number, point: CanvasPoint) => void;
+  onUp: (id: number) => void;
+  /** 2 本目の指が触れた。描きかけ(id)を取り消す。 */
+  onGestureStart?: (id: number | undefined) => void;
   onGestureChange?: (change: GestureChange) => void;
   onGestureEnd?: () => void;
   /** 2 本指タップ = もどる(ibisPaint / Procreate と同じ作法)。 */
@@ -75,9 +76,24 @@ function distance(a: TouchState, b: TouchState): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-/** 戻り値は購読解除関数。 */
-export function installPointerInput(canvas: HTMLCanvasElement, handlers: PointerHandlers): () => void {
+export interface PointerInputControl {
+  /**
+   * 「みんなで描く」モード。触れた指が全部それぞれ線になる。
+   * このモードではピンチ(拡大)も 2 本指タップ(戻る)も止める。
+   * 2 本目の指が「2 人目」なのか「拡大したい」のか区別できないため。
+   */
+  setMultiDraw: (enabled: boolean) => void;
+  dispose: () => void;
+}
+
+export function installPointerInput(
+  canvas: HTMLCanvasElement,
+  handlers: PointerHandlers,
+): PointerInputControl {
   let drawPointerId: number | null = null;
+  let multiDraw = false;
+  /** みんなで描くモードで、いま描いている指。 */
+  const drawing = new Set<number>();
   const touches = new Map<number, TouchState>();
   let gestureActive = false;
   let lastDistance = 0;
@@ -117,6 +133,14 @@ export function installPointerInput(canvas: HTMLCanvasElement, handlers: Pointer
   };
 
   const onPointerDown = (event: PointerEvent): void => {
+    if (multiDraw) {
+      // 何本目でも等しく線になる。ジェスチャの判定は一切しない。
+      drawing.add(event.pointerId);
+      canvas.setPointerCapture(event.pointerId);
+      event.preventDefault();
+      handlers.onDown(event.pointerId, pointOf(event));
+      return;
+    }
     if (event.pointerType === "touch") {
       if (touches.size === 0) {
         multiStartedAt = event.timeStamp;
@@ -133,12 +157,9 @@ export function installPointerInput(canvas: HTMLCanvasElement, handlers: Pointer
         suppressDraw = true;
         lastDistance = distance(pair[0], pair[1]);
         lastCenter = centerOf(pair[0], pair[1]);
-        if (drawPointerId !== null) {
-          drawPointerId = null;
-          handlers.onGestureStart?.();
-        } else {
-          handlers.onGestureStart?.();
-        }
+        const id = drawPointerId;
+        drawPointerId = null;
+        handlers.onGestureStart?.(id ?? undefined);
         return;
       }
     }
@@ -147,10 +168,18 @@ export function installPointerInput(canvas: HTMLCanvasElement, handlers: Pointer
     drawPointerId = event.pointerId;
     canvas.setPointerCapture(event.pointerId);
     event.preventDefault();
-    handlers.onDown(pointOf(event));
+    handlers.onDown(event.pointerId, pointOf(event));
   };
 
   const onPointerMove = (event: PointerEvent): void => {
+    if (multiDraw) {
+      if (!drawing.has(event.pointerId)) return;
+      event.preventDefault();
+      const samples = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+      if (samples.length > 0) for (const sample of samples) handlers.onMove(event.pointerId, pointOf(sample));
+      else handlers.onMove(event.pointerId, pointOf(event));
+      return;
+    }
     if (event.pointerType === "touch" && touches.has(event.pointerId)) {
       const previous = touches.get(event.pointerId);
       if (previous !== undefined) {
@@ -179,11 +208,17 @@ export function installPointerInput(canvas: HTMLCanvasElement, handlers: Pointer
     event.preventDefault();
     // 高頻度ポインタ(120Hz の iPad 等)では中間座標がまとめて届く。使うと速い線がカクつかない。
     const coalesced = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
-    if (coalesced.length > 0) for (const sample of coalesced) handlers.onMove(pointOf(sample));
-    else handlers.onMove(pointOf(event));
+    if (coalesced.length > 0)
+      for (const sample of coalesced) handlers.onMove(event.pointerId, pointOf(sample));
+    else handlers.onMove(event.pointerId, pointOf(event));
   };
 
   const finish = (event: PointerEvent): void => {
+    if (multiDraw) {
+      if (!drawing.delete(event.pointerId)) return;
+      handlers.onUp(event.pointerId);
+      return;
+    }
     if (event.pointerType === "touch") {
       touches.delete(event.pointerId);
       if (touches.size < 2 && gestureActive) {
@@ -196,7 +231,9 @@ export function installPointerInput(canvas: HTMLCanvasElement, handlers: Pointer
         const tapped = maxTouchCount === 2 && quick && movedPx <= TAP_SLOP_PX;
         maxTouchCount = 0;
         if (tapped) {
+          const id = drawPointerId;
           drawPointerId = null;
+          if (id !== null) handlers.onUp(id);
           handlers.onTwoFingerTap?.();
           return;
         }
@@ -204,7 +241,7 @@ export function installPointerInput(canvas: HTMLCanvasElement, handlers: Pointer
     }
     if (event.pointerId !== drawPointerId) return;
     drawPointerId = null;
-    handlers.onUp();
+    handlers.onUp(event.pointerId);
   };
 
   canvas.addEventListener("pointerdown", onPointerDown);
@@ -215,11 +252,24 @@ export function installPointerInput(canvas: HTMLCanvasElement, handlers: Pointer
   const swallow = (event: Event): void => event.preventDefault();
   canvas.addEventListener("contextmenu", swallow);
 
-  return () => {
+  const dispose = (): void => {
     canvas.removeEventListener("pointerdown", onPointerDown);
     canvas.removeEventListener("pointermove", onPointerMove);
     canvas.removeEventListener("pointerup", finish);
     canvas.removeEventListener("pointercancel", finish);
     canvas.removeEventListener("contextmenu", swallow);
+  };
+
+  return {
+    setMultiDraw: (enabled: boolean) => {
+      multiDraw = enabled;
+      // 切り替えの瞬間に触れていた指の状態は捨てる(半端な線を残さない)。
+      drawing.clear();
+      touches.clear();
+      drawPointerId = null;
+      gestureActive = false;
+      suppressDraw = false;
+    },
+    dispose,
   };
 }

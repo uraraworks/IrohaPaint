@@ -18,7 +18,7 @@ import {
 } from "./core/model.ts";
 import { createWorkStore, requestPersistentStorage } from "./core/workStore.ts";
 import { hexToRgba, Surface } from "./core/surface.ts";
-import { installPointerInput } from "./core/pointerInput.ts";
+import { installPointerInput, type PointerInputControl } from "./core/pointerInput.ts";
 import { clampView, IDENTITY, panBy, toCss, zoomAt, type ViewTransform } from "./core/viewport.ts";
 import { CHEST_ICON_SVG, INITIAL_TOOLS, nextUnlock, TOOL_DEFS, type ToolId, type Unlock } from "./core/tools.ts";
 import { labelText, plainText, renderLabel, renderRuby } from "./ui/label.ts";
@@ -65,9 +65,11 @@ class App {
   private currentWorkId: string | null = null;
   private saveTimer: number | null = null;
   private lastSnapshotAt = 0;
-  private drawing = false;
-  /** 直前に受け取った生の座標(手ブレ補正前)。指を離した位置まで線を伸ばすのに使う。 */
-  private lastPoint: { x: number; y: number } | null = null;
+  /** 指ごとの、直前に受け取った生の座標(手ブレ補正前)。離した位置まで線を伸ばすのに使う。 */
+  private readonly lastPoints = new Map<number, { x: number; y: number }>();
+  /** 「みんなで描く」モード。同時に何本も描ける代わりに、拡大と戻るを止める。 */
+  private multiDraw = false;
+  private input: PointerInputControl | null = null;
   /** 紙の見え方(ピンチ拡大・移動)。描画内容には影響しない。 */
   private view: ViewTransform = IDENTITY;
 
@@ -86,6 +88,7 @@ class App {
     this.currentWorkId = progress.currentWorkId;
     this.gridOn = progress.grid;
     this.nib = progress.nib;
+    this.multiDraw = progress.multiDraw;
 
     this.stage = document.createElement("div");
     this.stage.className = "stage";
@@ -115,9 +118,11 @@ class App {
     this.syncGrid();
     this.buildSoundToggle();
     this.installInput(canvas);
+    this.input?.setMultiDraw(this.multiDraw);
     this.installWheelZoom(canvas);
     // PC のキーボードも一応拾う(タッチが主・マウス/キーは後追いという位置づけ)。
     window.addEventListener("keydown", (event) => {
+      if (this.multiDraw) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         // Shift+Ctrl+Z は「進む」。PC の一般的な作法に合わせる。
@@ -294,6 +299,7 @@ class App {
     this.syncActive();
     this.syncHistoryButtons();
     this.syncGrid();
+    this.syncMultiDraw();
   }
 
   private createToolButton(id: ToolId): HTMLElement {
@@ -379,16 +385,22 @@ class App {
         this.sound.play("poko");
         break;
       case "undo":
+        if (this.multiDraw) break;
         if (this.surface.undo()) {
           this.sound.play("shu");
           this.afterHistoryChange();
         }
         break;
       case "redo":
+        if (this.multiDraw) break;
         if (this.surface.redo()) {
           this.sound.play("poko");
           this.afterHistoryChange();
         }
+        break;
+      case "together":
+        this.setMultiDraw(!this.multiDraw);
+        this.sound.play(this.multiDraw ? "fanfare" : "poko");
         break;
       case "grid":
         this.gridOn = !this.gridOn;
@@ -408,6 +420,30 @@ class App {
   private setActiveTool(tool: ActiveTool): void {
     this.activeTool = tool;
     this.syncActive();
+  }
+
+  /**
+   * 「みんなで描く」モードの切り替え。
+   * 一人のときは描き込むためにピンチと戻るを使い、みんなのときは一発描きに割り切る、
+   * という切り分け。同時に描いていると「誰の 1 手を戻すか」が決められないため。
+   */
+  private setMultiDraw(enabled: boolean): void {
+    this.multiDraw = enabled;
+    this.input?.setMultiDraw(enabled);
+    if (enabled) {
+      // 拡大したまま入ると、隣の子の描く場所が画面外になる。等倍へ戻す。
+      this.applyView(IDENTITY);
+      // 履歴も持ち越さない(他の子の線が消える事故を作らない)。
+      this.surface.dropHistory();
+    }
+    this.syncMultiDraw();
+    this.syncHistoryButtons();
+    this.persistProgress();
+  }
+
+  private syncMultiDraw(): void {
+    this.buttons.get("together")?.classList.toggle("is-active", this.multiDraw);
+    this.root.classList.toggle("is-multi-draw", this.multiDraw);
   }
 
   private syncGrid(): void {
@@ -446,8 +482,8 @@ class App {
   // --- 描画 -------------------------------------------------------------
 
   private installInput(canvas: HTMLCanvasElement): void {
-    installPointerInput(canvas, {
-      onDown: (point) => {
+    this.input = installPointerInput(canvas, {
+      onDown: (id, point) => {
         this.sound.unlock();
         this.guide.hide();
         this.colorPanel.close();
@@ -478,9 +514,9 @@ class App {
           return;
         }
 
-        this.drawing = true;
-        this.lastPoint = point;
+        this.lastPoints.set(id, point);
         this.surface.beginStroke(
+          id,
           point.x,
           point.y,
           {
@@ -494,15 +530,15 @@ class App {
           point.pressure,
         );
       },
-      onMove: (point) => {
-        if (!this.drawing) return;
-        this.lastPoint = point;
-        this.surface.extendStroke(point.x, point.y, point.time, point.pressure);
+      onMove: (id, point) => {
+        if (!this.lastPoints.has(id)) return;
+        this.lastPoints.set(id, point);
+        this.surface.extendStroke(id, point.x, point.y, point.time, point.pressure);
       },
-      onGestureStart: () => {
+      onGestureStart: (id) => {
         // ピンチに移った瞬間、描きかけの線を捨てる(写真アプリの感覚で触った子を裏切らない)。
-        this.drawing = false;
-        this.surface.cancelStroke();
+        if (id !== undefined) this.lastPoints.delete(id);
+        this.surface.cancelStroke(id);
       },
       onGestureChange: (change) => {
         const next = zoomAt(
@@ -524,12 +560,14 @@ class App {
           this.afterHistoryChange();
         }
       },
-      onUp: () => {
-        if (!this.drawing) return;
-        this.drawing = false;
-        const rect = this.surface.endStroke(this.lastPoint?.x, this.lastPoint?.y);
+      onUp: (id) => {
+        const last = this.lastPoints.get(id);
+        if (last === undefined) return;
+        this.lastPoints.delete(id);
+        const rect = this.surface.endStroke(id, last.x, last.y);
         if (rect === null) return;
-        this.surface.commit(rect);
+        // みんなで描くモードは履歴を持たない(誰の 1 手を戻すか決められない)。
+        this.surface.commit(rect, !this.multiDraw);
         this.countStroke();
         this.afterHistoryChange();
       },
@@ -558,6 +596,7 @@ class App {
       "wheel",
       (event) => {
         event.preventDefault();
+        if (this.multiDraw) return;
         const factor = Math.exp(-event.deltaY * 0.002);
         this.applyView(zoomAt(this.view, this.layoutRect(), event.clientX, event.clientY, factor));
       },
@@ -572,8 +611,9 @@ class App {
 
   /** 戻る/進むが効かない時は薄く見せる(押しても壊れないので無効化はしない)。 */
   private syncHistoryButtons(): void {
-    this.buttons.get("undo")?.classList.toggle("is-dim", !this.surface.canUndo);
-    this.buttons.get("redo")?.classList.toggle("is-dim", !this.surface.canRedo);
+    // みんなで描くモードでは戻る/進むを持たない。押せないことが見て分かるようにする。
+    this.buttons.get("undo")?.classList.toggle("is-dim", this.multiDraw || !this.surface.canUndo);
+    this.buttons.get("redo")?.classList.toggle("is-dim", this.multiDraw || !this.surface.canRedo);
   }
 
   /** 選択中の色をツールバーのボタンに反映する。 */
@@ -603,6 +643,7 @@ class App {
       currentWorkId: this.work?.id ?? null,
       grid: this.gridOn,
       nib: this.nib,
+      multiDraw: this.multiDraw,
     });
   }
 

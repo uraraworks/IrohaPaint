@@ -22,6 +22,7 @@ describe("進捗の保存", () => {
       currentWorkId: "work-1",
       grid: true,
       nib: "gpen",
+      multiDraw: true,
     });
     const progress = loadProgress();
     expect(progress.ownedTools).toContain("picker");
@@ -29,6 +30,7 @@ describe("進捗の保存", () => {
     expect(progress.currentWorkId).toBe("work-1");
     expect(progress.grid).toBe(true);
     expect(progress.nib).toBe("gpen");
+    expect(progress.multiDraw).toBe(true);
   });
 
   it("保存データが壊れていても初期道具は必ず揃う", () => {
@@ -50,7 +52,14 @@ describe("進捗の保存", () => {
     });
     expect(loadProgress().ownedTools).toEqual([...INITIAL_TOOLS]);
     expect(() =>
-      saveProgress({ ownedTools: [], strokeCount: 0, currentWorkId: null, grid: false, nib: "crayon" }),
+      saveProgress({
+        ownedTools: [],
+        strokeCount: 0,
+        currentWorkId: null,
+        grid: false,
+        nib: "crayon",
+        multiDraw: false,
+      }),
     ).not.toThrow();
   });
 });

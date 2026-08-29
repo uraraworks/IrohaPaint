@@ -12,6 +12,7 @@ export type ToolId =
   | "undo"
   | "redo"
   | "grid"
+  | "together"
   | "works"
   | "done"
   | "picker"
@@ -115,6 +116,21 @@ export const TOOL_DEFS: Readonly<Record<ToolId, ToolDef>> = {
     </svg>`,
     description: "したじきの マスを だしたり けしたり できるよ",
   },
+  // みんなで描くモード。触れた指がぜんぶ線になる代わりに、拡大と戻るは止まる。
+  together: {
+    id: "together",
+    label: [{ base: "みんな" }],
+    icon: "👥",
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <circle cx="11" cy="11" r="5" fill="#f3c64b" stroke="#3d3730" stroke-width="2"/>
+      <path d="M3 27c0-4.4 3.6-8 8-8s8 3.6 8 8" fill="#f3c64b" stroke="#3d3730" stroke-width="2"
+        stroke-linejoin="round"/>
+      <circle cx="22" cy="12" r="4.2" fill="#8cc152" stroke="#3d3730" stroke-width="2"/>
+      <path d="M16.5 27c0-3.9 2.9-6.8 6.5-6.8 3.3 0 6 2.5 6 6.8" fill="#8cc152" stroke="#3d3730"
+        stroke-width="2" stroke-linejoin="round"/>
+    </svg>`,
+    description: "みんなで いっしょに かけるよ",
+  },
   // 作品カタログ。「とっておいた絵」をメニューのように並べて選ぶ。
   works: {
     id: "works",
@@ -183,6 +199,7 @@ export const INITIAL_TOOLS: readonly ToolId[] = [
   "undo",
   "redo",
   "grid",
+  "together",
   "works",
   "done",
 ];

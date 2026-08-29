@@ -18,6 +18,8 @@ export interface Progress {
   grid: boolean;
   /** 選んでいるペン先。 */
   nib: NibId;
+  /** 「みんなで描く」モード。 */
+  multiDraw: boolean;
 }
 
 export function loadProgress(): Progress {
@@ -27,6 +29,7 @@ export function loadProgress(): Progress {
     currentWorkId: null,
     grid: false,
     nib: "crayon",
+    multiDraw: false,
   };
   try {
     const raw = localStorage.getItem(KEY);
@@ -43,6 +46,7 @@ export function loadProgress(): Progress {
       currentWorkId: typeof parsed.currentWorkId === "string" ? parsed.currentWorkId : null,
       grid: parsed.grid === true,
       nib: isNibId(parsed.nib) ? parsed.nib : "crayon",
+      multiDraw: parsed.multiDraw === true,
     };
   } catch {
     // プライベートブラウズ等で localStorage が使えなくても描けることを優先する。

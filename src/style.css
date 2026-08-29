@@ -257,6 +257,11 @@ body {
   opacity: 0.35;
 }
 
+/* みんなで描くモード中は紙のふちを目立たせ、ふだんと違う状態だと分かるようにする。 */
+.app.is-multi-draw .paper {
+  box-shadow: 0 0 0 5px var(--accent), 0 6px 18px rgba(0, 0, 0, 0.14);
+}
+
 /* 漢字＋総ルビ(企画書§4.2 の L2)。ふりがなは本文の半分程度に。 */
 .tool-button .label {
   display: block;
