@@ -583,11 +583,13 @@ ruby > rt {
   background: #eaf4fc;
 }
 
-/* 太さの段。 */
+/* 太さの段。段数が増えたので、狭い画面では折り返す。 */
 .size-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   justify-content: center;
+  max-width: min(520px, 88vw);
 }
 
 .size-button {
@@ -654,8 +656,25 @@ ruby > rt {
 
 .gallery-title {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0;
   font-size: 26px;
+}
+
+.gallery-title-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+}
+
+.gallery-title-icon svg {
+  width: 34px;
+  height: 34px;
 }
 
 .gallery-tab,

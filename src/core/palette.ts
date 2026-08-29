@@ -71,8 +71,13 @@ export function nearestBeadColor(hex: string): string {
   return best;
 }
 
-/** ふでの太さ 3 段階(キャンバス実解像度 1748px 幅に対する px)。 */
-export const PEN_SIZES: readonly number[] = [10, 26, 60];
+/**
+ * ふでの太さ 5 段階(キャンバス実解像度 1748px 幅に対する px)。
+ *
+ * 細い側の 3 と 6 は、画面に収めて表示すると 1〜3px 相当にしかならない。
+ * 拡大して描き込むときのための段で、等倍のまま使うものではない。
+ */
+export const PEN_SIZES: readonly number[] = [3, 6, 10, 26, 60];
 
 /**
  * 消しゴムの太さ 3 段階。ふでより一回り大きい。

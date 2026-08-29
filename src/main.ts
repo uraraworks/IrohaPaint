@@ -70,7 +70,8 @@ class App {
   private ownedTools: ToolId[] = [...INITIAL_TOOLS];
   private activeTool: ActiveTool = "pen";
   private color = CRAYON_COLORS[0] ?? "#3d3730";
-  private penSize = PEN_SIZES[1] ?? 26;
+  // 段が増えたので、既定は中央(10)。細い 2 段は拡大して描き込む用。
+  private penSize = PEN_SIZES[2] ?? 10;
   private eraserSize = ERASER_SIZES[1] ?? 70;
   /** 下敷き。なし / 方眼 / ビーズ。ビーズはマスにしか置けなくなる。 */
   private gridMode: GridMode = "off";
@@ -305,8 +306,9 @@ class App {
       button.dataset.size = String(size);
       const dot = document.createElement("span");
       dot.className = "size-dot";
-      // キャンバス実解像度の太さをそのまま出すと大きすぎるので縮めて見せる。
-      const shown = Math.min(64, Math.max(8, Math.round(size * 0.6)));
+      // 実際の太さをそのまま出すと、太い側は大きすぎ、細い側は差が見えない。
+      // 平方根で圧縮して、どの段も隣との違いが分かる大きさにする。
+      const shown = Math.round(4 + Math.sqrt(size) * 4);
       dot.style.width = `${shown}px`;
       dot.style.height = `${shown}px`;
       button.appendChild(dot);

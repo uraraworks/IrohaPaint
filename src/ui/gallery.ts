@@ -133,8 +133,10 @@ export class Gallery {
     this.releaseUrls();
     this.grid.textContent = "";
     this.grid.className = "gallery-grid";
-    this.title.textContent = "";
-    this.title.appendChild(renderRuby(this.tab === "works" ? TEXT.works : TEXT.trash));
+    this.setTitle(
+      this.tab === "works" ? TEXT.works : TEXT.trash,
+      this.tab === "works" ? (TOOL_DEFS.works.iconSvg ?? "") : TRASH_SVG,
+    );
     this.setTabButton();
 
     if (this.tab === "works") this.grid.appendChild(this.createNewCard());
@@ -162,8 +164,7 @@ export class Gallery {
     this.releaseUrls();
     this.grid.textContent = "";
     this.grid.className = "gallery-grid is-timeline";
-    this.title.textContent = "";
-    this.title.appendChild(renderRuby(TEXT.historyTitle));
+    this.setTitle(TEXT.historyTitle, HISTORY_SVG);
     this.setTabButton();
 
     if (work.snapshots.length === 0) {
@@ -256,6 +257,17 @@ export class Gallery {
 
     card.append(thumb, caption, note, action, dot);
     return card;
+  }
+
+  /** 見出しは「アイコン + 文字」。どの画面にいるかを絵でも分かるようにする。 */
+  private setTitle(parts: LabelPart[], iconSvg: string): void {
+    this.title.textContent = "";
+    const icon = document.createElement("span");
+    icon.className = "gallery-title-icon";
+    icon.innerHTML = iconSvg;
+    const text = document.createElement("span");
+    text.appendChild(renderRuby(parts));
+    this.title.append(icon, text);
   }
 
   private setTabButton(): void {
