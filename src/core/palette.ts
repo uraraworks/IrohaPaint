@@ -17,4 +17,10 @@ export const CRAYON_COLORS: readonly string[] = [
 
 /** ふでの太さ 3 段階(キャンバス実解像度 1748px 幅に対する px)。 */
 export const PEN_SIZES: readonly number[] = [10, 26, 60];
-export const ERASER_SIZE = 70;
+
+/**
+ * 消しゴムの太さ 3 段階。ふでより一回り大きい。
+ * 消す動作は「細かく直す」より「広く消す」が多く、
+ * ふでと同じ細さだと塗りつぶしを消すのに時間がかかりすぎる。
+ */
+export const ERASER_SIZES: readonly number[] = [26, 70, 160];

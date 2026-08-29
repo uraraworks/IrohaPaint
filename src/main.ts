@@ -7,7 +7,7 @@
 //   5. リロードしても絵が残っている
 //   6. iPad(指)と PC(マウス)の両方で成立する
 import "./style.css";
-import { CRAYON_COLORS, ERASER_SIZE, PEN_SIZES } from "./core/palette.ts";
+import { CRAYON_COLORS, ERASER_SIZES, PEN_SIZES } from "./core/palette.ts";
 import {
   appendSnapshot,
   createWork,
@@ -51,6 +51,7 @@ class App {
   private activeTool: ActiveTool = "pen";
   private color = CRAYON_COLORS[0] ?? "#3d3730";
   private penSize = PEN_SIZES[1] ?? 26;
+  private eraserSize = ERASER_SIZES[1] ?? 70;
   private strokeCount = 0;
   private pendingUnlock: Unlock | null = null;
 
@@ -65,6 +66,7 @@ class App {
 
   private colorPanel!: Panel;
   private penPanel!: Panel;
+  private eraserPanel!: Panel;
   private gallery!: Gallery;
 
   constructor(root: HTMLElement) {
@@ -137,41 +139,56 @@ class App {
     }
     this.colorPanel.element.appendChild(swatches);
 
-    this.penPanel = new Panel(document.body, "pen-panel");
-    for (const size of PEN_SIZES) {
-      const button = document.createElement("button");
-      button.className = "size-button";
-      button.dataset.size = String(size);
-      const dot = document.createElement("span");
-      dot.className = "size-dot";
-      // キャンバス実解像度の太さをそのまま出すと大きすぎるので縮めて見せる。
-      const shown = Math.max(8, Math.round(size * 0.6));
-      dot.style.width = `${shown}px`;
-      dot.style.height = `${shown}px`;
-      button.appendChild(dot);
-      button.setAttribute("aria-label", `ふとさ ${size}`);
-      button.addEventListener("click", () => {
-        this.penSize = size;
-        this.setActiveTool("pen");
-        this.syncSizes();
-        this.sound.play("poko");
-        this.penPanel.close();
-      });
-      this.penPanel.element.appendChild(button);
-    }
+    this.penPanel = this.createSizePanel("pen-panel", PEN_SIZES, (size) => {
+      this.penSize = size;
+      this.setActiveTool("pen");
+      this.sound.play("poko");
+    });
+    this.eraserPanel = this.createSizePanel("eraser-panel", ERASER_SIZES, (size) => {
+      this.eraserSize = size;
+      this.setActiveTool("eraser");
+      this.sound.play("shu");
+    });
     this.syncSwatches();
     this.syncSizes();
 
     // パネル外タップで閉じる。
     document.addEventListener("pointerdown", (event) => {
       const target = event.target as Node;
-      if (this.colorPanel.isOpen && !this.colorPanel.element.contains(target) && !this.isToolbarNode(target)) {
-        this.colorPanel.close();
-      }
-      if (this.penPanel.isOpen && !this.penPanel.element.contains(target) && !this.isToolbarNode(target)) {
-        this.penPanel.close();
+      if (this.isToolbarNode(target)) return;
+      for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel]) {
+        if (panel.isOpen && !panel.element.contains(target)) panel.close();
       }
     });
+  }
+
+  /** 太さを選ぶパネル。ふでと消しゴムで同じ形にする(操作を覚え直させない)。 */
+  private createSizePanel(
+    className: string,
+    sizes: readonly number[],
+    onPick: (size: number) => void,
+  ): Panel {
+    const panel = new Panel(document.body, className);
+    for (const size of sizes) {
+      const button = document.createElement("button");
+      button.className = "size-button";
+      button.dataset.size = String(size);
+      const dot = document.createElement("span");
+      dot.className = "size-dot";
+      // キャンバス実解像度の太さをそのまま出すと大きすぎるので縮めて見せる。
+      const shown = Math.min(64, Math.max(8, Math.round(size * 0.6)));
+      dot.style.width = `${shown}px`;
+      dot.style.height = `${shown}px`;
+      button.appendChild(dot);
+      button.setAttribute("aria-label", `ふとさ ${size}`);
+      button.addEventListener("click", () => {
+        onPick(size);
+        this.syncSizes();
+        panel.close();
+      });
+      panel.element.appendChild(button);
+    }
+    return panel;
   }
 
   private isToolbarNode(node: Node): boolean {
@@ -269,6 +286,13 @@ class App {
   private onToolButton(id: ToolId, button: HTMLElement): void {
     this.sound.unlock();
     this.guide.hide();
+    // これから開くもの以外は閉じる。開きっぱなしだとパネル同士が重なり、
+    // 下のパネルのボタンを押せてしまう。
+    const keep =
+      id === "color" ? this.colorPanel : id === "pen" ? this.penPanel : id === "eraser" ? this.eraserPanel : null;
+    for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel]) {
+      if (panel !== keep) panel.close();
+    }
     switch (id) {
       case "pen":
         this.setActiveTool("pen");
@@ -281,6 +305,7 @@ class App {
         break;
       case "eraser":
         this.setActiveTool("eraser");
+        this.eraserPanel.toggle(button);
         this.sound.play("shu");
         break;
       case "picker":
@@ -335,9 +360,13 @@ class App {
   }
 
   private syncSizes(): void {
-    for (const element of this.penPanel.element.querySelectorAll<HTMLElement>(".size-button")) {
-      element.classList.toggle("is-active", element.dataset.size === String(this.penSize));
-    }
+    const mark = (panel: Panel, current: number): void => {
+      for (const element of panel.element.querySelectorAll<HTMLElement>(".size-button")) {
+        element.classList.toggle("is-active", element.dataset.size === String(current));
+      }
+    };
+    mark(this.penPanel, this.penSize);
+    mark(this.eraserPanel, this.eraserSize);
   }
 
   // --- 描画 -------------------------------------------------------------
@@ -349,6 +378,7 @@ class App {
         this.guide.hide();
         this.colorPanel.close();
         this.penPanel.close();
+        this.eraserPanel.close();
 
         if (this.activeTool === "picker") {
           const picked = this.surface.pick(point.x, point.y);
@@ -377,7 +407,7 @@ class App {
         this.drawing = true;
         this.surface.beginStroke(point.x, point.y, {
           color: this.color,
-          size: this.activeTool === "eraser" ? ERASER_SIZE : this.penSize,
+          size: this.activeTool === "eraser" ? this.eraserSize : this.penSize,
           erase: this.activeTool === "eraser",
         });
       },

@@ -326,6 +326,12 @@ ruby > rt {
   border-radius: 50%;
 }
 
+/* 消しゴムの太さは「消える丸」に見せる。ふでの黒丸と取り違えないように。 */
+.eraser-panel .size-dot {
+  background: var(--paper);
+  border: 3px solid var(--ink);
+}
+
 /* --- 作品カタログ ---
    ファミレスのメニュー方式: 写真が主役・文字は一言・カードは全部同じ形。
    文字を読まなくても絵で選べることを最優先にする。
