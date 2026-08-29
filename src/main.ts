@@ -13,9 +13,10 @@ import { createWorkStore } from "./core/workStore.ts";
 import { hexToRgba, Surface } from "./core/surface.ts";
 import { installPointerInput } from "./core/pointerInput.ts";
 import { clampView, IDENTITY, panBy, toCss, zoomAt, type ViewTransform } from "./core/viewport.ts";
-import { INITIAL_TOOLS, nextUnlock, TOOL_DEFS, type ToolId, type Unlock } from "./core/tools.ts";
+import { CHEST_ICON_SVG, INITIAL_TOOLS, nextUnlock, TOOL_DEFS, type ToolId, type Unlock } from "./core/tools.ts";
 import { labelText, renderLabel } from "./ui/label.ts";
 import { SoundPlayer } from "./core/sound.ts";
+import { loadProgress, saveProgress } from "./core/progress.ts";
 import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
@@ -37,6 +38,7 @@ class App {
   private readonly store = createWorkStore();
   private readonly buttons = new Map<string, HTMLElement>();
 
+  /** 道具箱の中身。一度増えたら減らない(進捗は localStorage に永続化)。 */
   private ownedTools: ToolId[] = [...INITIAL_TOOLS];
   private activeTool: ActiveTool = "pen";
   private color = CRAYON_COLORS[0] ?? "#3d3730";
@@ -56,6 +58,11 @@ class App {
 
   constructor(root: HTMLElement) {
     this.root = root;
+    // 前回までに増えた道具と描いた量を先に戻す。ここを忘れると
+    // リロードで道具箱だけ巻き戻り、宝箱がもう一度出てしまう。
+    const progress = loadProgress();
+    this.ownedTools = progress.ownedTools;
+    this.strokeCount = progress.strokeCount;
 
     this.stage = document.createElement("div");
     this.stage.className = "stage";
@@ -77,9 +84,15 @@ class App {
     this.installWheelZoom(canvas);
     // PC のキーボードも一応拾う(タッチが主・マウス/キーは後追いという位置づけ)。
     window.addEventListener("keydown", (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === "z") {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
-        if (this.surface.undo()) this.scheduleSave();
+        // Shift+Ctrl+Z は「進む」。PC の一般的な作法に合わせる。
+        const moved = event.shiftKey ? this.surface.redo() : this.surface.undo();
+        if (moved) this.afterHistoryChange();
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+        event.preventDefault();
+        if (this.surface.redo()) this.afterHistoryChange();
       }
     });
     void this.restore();
@@ -101,6 +114,7 @@ class App {
         // 色を選んだら描ける状態に戻す(消しゴムのまま色を選ぶ事故を防ぐ)。
         if (this.activeTool === "eraser") this.setActiveTool("pen");
         this.syncSwatches();
+        this.syncColorChip();
         this.sound.play("poko");
         this.colorPanel.close();
       });
@@ -172,6 +186,7 @@ class App {
     if (this.pendingUnlock !== null) this.toolbar.appendChild(this.createChestButton(this.pendingUnlock));
     this.toolbar.appendChild(this.createToolButton("done"));
     this.syncActive();
+    this.syncHistoryButtons();
   }
 
   private createToolButton(id: ToolId): HTMLElement {
@@ -181,7 +196,17 @@ class App {
     button.dataset.tool = id;
     const icon = document.createElement("span");
     icon.className = "icon";
-    icon.textContent = def.icon;
+    if (id === "color") {
+      // 今えらんでいる色をボタン自体に出す。パネルを開かなくても何色か分かる。
+      const chip = document.createElement("span");
+      chip.className = "color-chip";
+      chip.style.background = this.color;
+      icon.appendChild(chip);
+    } else if (def.iconSvg !== undefined) {
+      icon.innerHTML = def.iconSvg;
+    } else {
+      icon.textContent = def.icon;
+    }
     const label = document.createElement("span");
     label.className = "label";
     label.appendChild(renderLabel(def));
@@ -199,7 +224,7 @@ class App {
     button.className = "tool-button chest is-new";
     const chestIcon = document.createElement("span");
     chestIcon.className = "icon";
-    chestIcon.textContent = "🎁";
+    chestIcon.innerHTML = CHEST_ICON_SVG;
     const chestLabel = document.createElement("span");
     chestLabel.className = "label";
     // 宝箱だけは「開けたくなる」ことが全てなので、読みやすさ優先でひらがなのまま。
@@ -241,7 +266,13 @@ class App {
       case "undo":
         if (this.surface.undo()) {
           this.sound.play("shu");
-          this.scheduleSave();
+          this.afterHistoryChange();
+        }
+        break;
+      case "redo":
+        if (this.surface.redo()) {
+          this.sound.play("poko");
+          this.afterHistoryChange();
         }
         break;
       case "done":
@@ -293,6 +324,7 @@ class App {
           if (picked !== null) {
             this.color = picked;
             this.syncSwatches();
+            this.syncColorChip();
             this.sound.play("poko");
             // スポイトは「吸ったら描ける」まで含めて 1 動作にする。
             this.setActiveTool("pen");
@@ -306,7 +338,7 @@ class App {
             this.surface.commit(rect);
             this.sound.play("shu");
             this.countStroke();
-            this.scheduleSave();
+            this.afterHistoryChange();
           }
           return;
         }
@@ -344,7 +376,7 @@ class App {
         // 2 本指タップ = もどる。ツールバーまで指を運ばずに失敗を消せる。
         if (this.surface.undo()) {
           this.sound.play("shu");
-          this.scheduleSave();
+          this.afterHistoryChange();
         }
       },
       onUp: () => {
@@ -354,7 +386,7 @@ class App {
         if (rect === null) return;
         this.surface.commit(rect);
         this.countStroke();
-        this.scheduleSave();
+        this.afterHistoryChange();
       },
     });
   }
@@ -388,8 +420,26 @@ class App {
     );
   }
 
+  private afterHistoryChange(): void {
+    this.syncHistoryButtons();
+    this.scheduleSave();
+  }
+
+  /** 戻る/進むが効かない時は薄く見せる(押しても壊れないので無効化はしない)。 */
+  private syncHistoryButtons(): void {
+    this.buttons.get("undo")?.classList.toggle("is-dim", !this.surface.canUndo);
+    this.buttons.get("redo")?.classList.toggle("is-dim", !this.surface.canRedo);
+  }
+
+  /** 選択中の色をツールバーのボタンに反映する。 */
+  private syncColorChip(): void {
+    const chip = this.buttons.get("color")?.querySelector<HTMLElement>(".color-chip");
+    if (chip !== undefined && chip !== null) chip.style.background = this.color;
+  }
+
   private countStroke(): void {
     this.strokeCount += 1;
+    this.persistProgress();
     if (this.pendingUnlock !== null) return;
     const unlock = nextUnlock(this.strokeCount, this.ownedTools);
     if (unlock === null) return;
@@ -401,9 +451,14 @@ class App {
     if (chest !== undefined) this.guide.show("あけてみて", chest);
   }
 
+  private persistProgress(): void {
+    saveProgress({ ownedTools: this.ownedTools, strokeCount: this.strokeCount });
+  }
+
   private openChest(unlock: Unlock): void {
     this.pendingUnlock = null;
     this.ownedTools = [...this.ownedTools, unlock.tool];
+    this.persistProgress();
     this.renderToolbar();
     this.sound.play("fanfare");
     const button = this.buttons.get(unlock.tool);

@@ -2,7 +2,7 @@
 // 「もどる」はパッチ方式(undoStack.ts 参照)。
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./model.ts";
 import { floodFill, type Rgba } from "./floodFill.ts";
-import { DirtyRect, trimPatches, type FillRect, type UndoPatch } from "./undoStack.ts";
+import { DirtyRect, MAX_STEPS, trimPatches, type FillRect, type UndoPatch } from "./undoStack.ts";
 
 export const PAPER_COLOR = "#fffdf7";
 
@@ -27,6 +27,8 @@ export class Surface {
   private readonly backup: HTMLCanvasElement;
   private readonly backupCtx: CanvasRenderingContext2D;
   private patches: UndoPatch[] = [];
+  /** 「戻る」で巻き戻した分。新しく描いたら捨てる(一般的なペイントと同じ作法)。 */
+  private redoPatches: UndoPatch[] = [];
   private dirty: DirtyRect | null = null;
   private lastX = 0;
   private lastY = 0;
@@ -50,8 +52,12 @@ export class Surface {
     this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
   }
 
-  get undoDepth(): number {
-    return this.patches.length;
+  get canUndo(): boolean {
+    return this.patches.length > 0;
+  }
+
+  get canRedo(): boolean {
+    return this.redoPatches.length > 0;
   }
 
   clearToPaper(): void {
@@ -142,6 +148,8 @@ export class Surface {
   commit(rect: FillRect): void {
     const before = this.backupCtx.getImageData(rect.x, rect.y, rect.width, rect.height);
     this.patches = trimPatches([...this.patches, { ...rect, before }]);
+    // 巻き戻した先から描き直したら、その先の未来は無くなる。
+    this.redoPatches = [];
     this.syncBackup(rect);
   }
 
@@ -157,8 +165,24 @@ export class Surface {
   }
 
   undo(): boolean {
-    const patch = this.patches.pop();
+    return this.step(this.patches, this.redoPatches);
+  }
+
+  redo(): boolean {
+    return this.step(this.redoPatches, this.patches);
+  }
+
+  /**
+   * from の末尾 1 手を適用し、入れ替わりに「適用前の画素」を to へ積む。
+   * undo と redo は向きが違うだけの同じ操作なので 1 本にまとめる。
+   */
+  private step(from: UndoPatch[], to: UndoPatch[]): boolean {
+    const patch = from.pop();
     if (patch === undefined) return false;
+    // 戻す前の状態を反対側へ預ける。これが redo(または redo の undo)になる。
+    const current = this.ctx.getImageData(patch.x, patch.y, patch.width, patch.height);
+    to.push({ x: patch.x, y: patch.y, width: patch.width, height: patch.height, before: current });
+    while (to.length > MAX_STEPS) to.shift();
     this.ctx.globalCompositeOperation = "source-over";
     this.ctx.putImageData(patch.before, patch.x, patch.y);
     // 控えも巻き戻す。ここを忘れると次の 1 手で「戻したはずの絵」が復活する。
@@ -221,6 +245,7 @@ export class Surface {
       bitmap.close();
     }
     this.patches = [];
+    this.redoPatches = [];
     this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
   }
 }

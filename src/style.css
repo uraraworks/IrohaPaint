@@ -137,8 +137,33 @@ body {
 }
 
 .tool-button .icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
   font-size: 30px;
   line-height: 1;
+}
+
+.tool-button .icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+/* 「色」ボタンは今えらんでいる色そのものをアイコンにする。 */
+.color-chip {
+  display: block;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--line);
+}
+
+/* 効かない状態(戻る先が無い等)。押せなくはしない。 */
+.tool-button.is-dim {
+  opacity: 0.35;
 }
 
 /* 漢字＋総ルビ(企画書§4.2 の L2)。ふりがなは本文の半分程度に。 */
