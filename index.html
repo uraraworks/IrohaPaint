@@ -17,6 +17,15 @@
     <title>いろは - Iroha Paint</title>
   </head>
   <body>
+    <!-- ページ最上部の全幅ヘッダー。WebPaint98 / WebNP2 と同じ「ページ外側だけモダンな Web ページ」の構成。
+         フッターは置かない(リンクが無く、バージョンだけのために縦を取るのは描画面積の無駄)。
+         バージョンはヘッダー右端に出す。 -->
+    <header class="app-header">
+      <img class="app-icon" src="./icon/leaf-64.png" alt="" width="28" height="28" />
+      <h1>いろは</h1>
+      <p class="app-tagline">そだつ お絵かきアプリ</p>
+      <span class="app-version" id="app-version"></span>
+    </header>
     <div id="app" class="app bar-bottom"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

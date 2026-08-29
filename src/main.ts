@@ -39,6 +39,8 @@ type ActiveTool = "pen" | "eraser" | "picker" | "fill";
 class App {
   private readonly root: HTMLElement;
   private readonly stage: HTMLElement;
+  private readonly paperWrap: HTMLElement;
+  private readonly gridLayer: HTMLElement;
   private readonly toolbar: HTMLElement;
   private readonly surface: Surface;
   private readonly sound = new SoundPlayer();
@@ -52,6 +54,7 @@ class App {
   private color = CRAYON_COLORS[0] ?? "#3d3730";
   private penSize = PEN_SIZES[1] ?? 26;
   private eraserSize = ERASER_SIZES[1] ?? 70;
+  private gridOn = false;
   private strokeCount = 0;
   private pendingUnlock: Unlock | null = null;
 
@@ -77,12 +80,20 @@ class App {
     this.ownedTools = progress.ownedTools;
     this.strokeCount = progress.strokeCount;
     this.currentWorkId = progress.currentWorkId;
+    this.gridOn = progress.grid;
 
     this.stage = document.createElement("div");
     this.stage.className = "stage";
     const canvas = document.createElement("canvas");
     canvas.className = "paper";
-    this.stage.appendChild(canvas);
+    // 方眼は「下敷き」なので絵とは別のレイヤーに置く。
+    // こうすると PNG 書き出し(キャンバスのみ)に線が入らない。
+    this.paperWrap = document.createElement("div");
+    this.paperWrap.className = "paper-wrap";
+    this.gridLayer = document.createElement("div");
+    this.gridLayer.className = "grid-layer";
+    this.paperWrap.append(canvas, this.gridLayer);
+    this.stage.appendChild(this.paperWrap);
 
     this.toolbar = document.createElement("div");
     this.toolbar.className = "toolbar";
@@ -94,6 +105,7 @@ class App {
     this.buildPanels();
     this.buildGallery();
     this.renderToolbar();
+    this.syncGrid();
     this.buildSoundToggle();
     this.installInput(canvas);
     this.installWheelZoom(canvas);
@@ -232,6 +244,7 @@ class App {
     this.toolbar.appendChild(this.createToolButton("done"));
     this.syncActive();
     this.syncHistoryButtons();
+    this.syncGrid();
   }
 
   private createToolButton(id: ToolId): HTMLElement {
@@ -328,6 +341,12 @@ class App {
           this.afterHistoryChange();
         }
         break;
+      case "grid":
+        this.gridOn = !this.gridOn;
+        this.syncGrid();
+        this.persistProgress();
+        this.sound.play("poko");
+        break;
       case "works":
         void this.openGallery();
         break;
@@ -342,9 +361,15 @@ class App {
     this.syncActive();
   }
 
+  private syncGrid(): void {
+    this.gridLayer.classList.toggle("is-on", this.gridOn);
+    this.buttons.get("grid")?.classList.toggle("is-active", this.gridOn);
+  }
+
   private syncActive(): void {
     for (const [id, button] of this.buttons) {
       const isActive =
+        (id === "grid" && this.gridOn) ||
         (id === "pen" && this.activeTool === "pen") ||
         (id === "eraser" && this.activeTool === "eraser") ||
         (id === "picker" && this.activeTool === "picker") ||
@@ -454,7 +479,7 @@ class App {
 
   /** 変換前(等倍・移動なし)の紙の矩形。ピンチの中心計算に要る。 */
   private layoutRect(): { left: number; top: number; width: number; height: number } {
-    const rect = this.surface.canvas.getBoundingClientRect();
+    const rect = this.paperWrap.getBoundingClientRect();
     return {
       left: rect.left - this.view.tx,
       top: rect.top - this.view.ty,
@@ -465,7 +490,7 @@ class App {
 
   private applyView(next: ViewTransform): void {
     this.view = clampView(next, this.layoutRect(), window.innerWidth, window.innerHeight);
-    this.surface.canvas.style.transform = toCss(this.view);
+    this.paperWrap.style.transform = toCss(this.view);
   }
 
   /** PC 向け。ホイール(トラックパッドのピンチ含む)で拡大する。 */
@@ -517,6 +542,7 @@ class App {
       ownedTools: this.ownedTools,
       strokeCount: this.strokeCount,
       currentWorkId: this.work?.id ?? null,
+      grid: this.gridOn,
     });
   }
 
@@ -740,6 +766,10 @@ function rgbEquals(styleColor: string, hex: string): boolean {
   const toHex = (value: string): string => Number(value).toString(16).padStart(2, "0");
   return `#${toHex(match[1] ?? "0")}${toHex(match[2] ?? "0")}${toHex(match[3] ?? "0")}` === hex.toLowerCase();
 }
+
+const version = document.getElementById("app-version");
+// package.json の version がビルド時に差し込まれる(vite.config.ts の define)。
+if (version !== null) version.textContent = `v${__APP_VERSION__}`;
 
 const root = document.getElementById("app");
 if (root !== null) new App(root);

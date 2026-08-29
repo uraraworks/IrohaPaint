@@ -35,13 +35,59 @@ body {
   overscroll-behavior: none;
 }
 
+/* ヘッダー(固定高) + アプリ本体(残り全部)。 */
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  padding-top: calc(8px + env(safe-area-inset-top));
+  background: var(--bar);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.app-header .app-icon {
+  display: block;
+  width: 28px;
+  height: 28px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.app-header .app-tagline {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink);
+  opacity: 0.6;
+}
+
+/* バージョンは右端。押せない表示だけの情報なので、色も弱くしておく。 */
+.app-header .app-version {
+  margin-left: auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  opacity: 0.45;
+}
+
 .app {
   display: flex;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   /* OS のジェスチャ帯(ホームインジケータ / ナビバー)を避ける。
      下バーの誤爆で最も効く一手。 */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
-    env(safe-area-inset-left);
+  padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
 /* ツールバーの位置。既定は下。学童検証で誤タッチが出たら bar-left へ倒す。 */
@@ -65,18 +111,45 @@ body {
   padding: 10px;
 }
 
-.paper {
+/* 紙と方眼をまとめて拡大・移動させる入れ物。変形はここに掛ける。 */
+.paper-wrap {
+  position: relative;
   max-width: 100%;
   max-height: 100%;
   aspect-ratio: 1748 / 1181;
+  /* viewport.ts の変換式は原点を左上に置く前提 */
+  transform-origin: 0 0;
+}
+
+.paper {
+  display: block;
+  width: 100%;
+  height: 100%;
   background: var(--paper);
   border-radius: 14px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
   /* ブラウザ側のスクロール・ピンチを止めて描画に専念させる(ピンチは自前で処理する) */
   touch-action: none;
-  /* viewport.ts の変換式は原点を左上に置く前提 */
-  transform-origin: 0 0;
   cursor: crosshair;
+}
+
+/* 方眼マス(下敷き)。絵の上に重ねるだけで、キャンバスには一切描かない
+   = 「完成！」の PNG にも作品の保存データにも入らない。 */
+.grid-layer {
+  position: absolute;
+  inset: 0;
+  display: none;
+  border-radius: 14px;
+  pointer-events: none;
+  /* 1748x1181 を 16 マスで割ると 1 マス ≒ 109px。縦横で同じ大きさになる % を指定する。 */
+  background-image:
+    repeating-linear-gradient(to right, rgba(74, 163, 223, 0.34) 0 1px, transparent 1px 100%),
+    repeating-linear-gradient(to bottom, rgba(74, 163, 223, 0.34) 0 1px, transparent 1px 100%);
+  background-size: 6.25% 9.25%;
+}
+
+.grid-layer.is-on {
+  display: block;
 }
 
 .confetti {
@@ -670,6 +743,14 @@ ruby > rt {
 @media (max-height: 560px), (max-width: 560px) {
   :root {
     --btn: 68px;
+  }
+  /* 縦が狭いときはヘッダーを削って描く面積を優先する。 */
+  .app-header {
+    padding: 4px 12px;
+    padding-top: calc(4px + env(safe-area-inset-top));
+  }
+  .app-header .app-tagline {
+    display: none;
   }
   .tool-button {
     font-size: 13px;

@@ -13,10 +13,17 @@ export interface Progress {
   strokeCount: number;
   /** いま開いている作品。次に起動したときも同じ絵の続きから描けるようにする。 */
   currentWorkId: string | null;
+  /** 方眼マスを出しているか。下敷きの設定なので作品ではなく人に属する。 */
+  grid: boolean;
 }
 
 export function loadProgress(): Progress {
-  const fallback: Progress = { ownedTools: [...INITIAL_TOOLS], strokeCount: 0, currentWorkId: null };
+  const fallback: Progress = {
+    ownedTools: [...INITIAL_TOOLS],
+    strokeCount: 0,
+    currentWorkId: null,
+    grid: false,
+  };
   try {
     const raw = localStorage.getItem(KEY);
     if (raw === null) return fallback;
@@ -30,6 +37,7 @@ export function loadProgress(): Progress {
       ownedTools: owned,
       strokeCount: typeof parsed.strokeCount === "number" && parsed.strokeCount >= 0 ? parsed.strokeCount : 0,
       currentWorkId: typeof parsed.currentWorkId === "string" ? parsed.currentWorkId : null,
+      grid: parsed.grid === true,
     };
   } catch {
     // プライベートブラウズ等で localStorage が使えなくても描けることを優先する。

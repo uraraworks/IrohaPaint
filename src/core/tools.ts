@@ -5,7 +5,17 @@
 //   宝箱     … 描いた量に応じて 2 回。解放は「描く行為の自然な副産物」に限る。
 // Phase 1 の「道具カタログ」はこの表をそのままカタログ項目に流用できる形にしておく。
 
-export type ToolId = "pen" | "color" | "eraser" | "undo" | "redo" | "works" | "done" | "picker" | "fill";
+export type ToolId =
+  | "pen"
+  | "color"
+  | "eraser"
+  | "undo"
+  | "redo"
+  | "grid"
+  | "works"
+  | "done"
+  | "picker"
+  | "fill";
 
 /**
  * ラベルの 1 かたまり。ruby があれば漢字にふりがなを振る。
@@ -93,6 +103,18 @@ export const TOOL_DEFS: Readonly<Record<ToolId, ToolDef>> = {
     </svg>`,
     description: "もどしたのを もとに もどせるよ",
   },
+  // 方眼マス。下敷きであって絵ではないので、書き出した PNG には入らない。
+  grid: {
+    id: "grid",
+    label: [{ base: "マス" }],
+    icon: "▦",
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="5" y="5" width="22" height="22" rx="3" fill="#fffdf7" stroke="#3d3730" stroke-width="2"/>
+      <path d="M12.3 5v22M19.6 5v22M5 12.3h22M5 19.6h22" stroke="#3d3730" stroke-width="1.6"
+        opacity="0.55"/>
+    </svg>`,
+    description: "したじきの マスを だしたり けしたり できるよ",
+  },
   // 作品カタログ。「とっておいた絵」をメニューのように並べて選ぶ。
   works: {
     id: "works",
@@ -154,7 +176,16 @@ export const CHEST_ICON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
 </svg>`;
 
 /** 起動直後にツールバーにあるもの。 */
-export const INITIAL_TOOLS: readonly ToolId[] = ["pen", "color", "eraser", "undo", "redo", "works", "done"];
+export const INITIAL_TOOLS: readonly ToolId[] = [
+  "pen",
+  "color",
+  "eraser",
+  "undo",
+  "redo",
+  "grid",
+  "works",
+  "done",
+];
 
 export interface Unlock {
   tool: ToolId;

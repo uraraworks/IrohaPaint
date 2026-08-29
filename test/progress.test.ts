@@ -16,11 +16,17 @@ describe("進捗の保存", () => {
 
   it("保存した道具と描いた量が戻る", () => {
     installStorage();
-    saveProgress({ ownedTools: [...INITIAL_TOOLS, "picker"], strokeCount: 17, currentWorkId: "work-1" });
+    saveProgress({
+      ownedTools: [...INITIAL_TOOLS, "picker"],
+      strokeCount: 17,
+      currentWorkId: "work-1",
+      grid: true,
+    });
     const progress = loadProgress();
     expect(progress.ownedTools).toContain("picker");
     expect(progress.strokeCount).toBe(17);
     expect(progress.currentWorkId).toBe("work-1");
+    expect(progress.grid).toBe(true);
   });
 
   it("保存データが壊れていても初期道具は必ず揃う", () => {
@@ -40,6 +46,8 @@ describe("進捗の保存", () => {
       },
     });
     expect(loadProgress().ownedTools).toEqual([...INITIAL_TOOLS]);
-    expect(() => saveProgress({ ownedTools: [], strokeCount: 0, currentWorkId: null })).not.toThrow();
+    expect(() =>
+      saveProgress({ ownedTools: [], strokeCount: 0, currentWorkId: null, grid: false }),
+    ).not.toThrow();
   });
 });
