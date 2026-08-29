@@ -14,3 +14,31 @@ export const SOUND_OFF_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
   ${SPEAKER}
   <path d="M21 12.5l7 7M28 12.5l-7 7" fill="none" stroke="#3d3730" stroke-width="2" stroke-linecap="round"/>
 </svg>`;
+
+/** ゴミ箱。「捨てる」ボタンと「ゴミ箱」タブで使う。 */
+export const TRASH_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <path d="M11 7l1-2h8l1 2" fill="none" stroke="#3d3730" stroke-width="2" stroke-linecap="round"
+    stroke-linejoin="round"/>
+  <rect x="6" y="7" width="20" height="4" rx="2" fill="#f6a5b8" stroke="#3d3730" stroke-width="2"/>
+  <path d="M8.5 11h15l-1.5 14a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2z" fill="#fffdf7" stroke="#3d3730"
+    stroke-width="2" stroke-linejoin="round"/>
+  <path d="M13 15v8M19 15v8" stroke="#3d3730" stroke-width="2" stroke-linecap="round"/>
+</svg>`;
+
+/** 取り戻す。ゴミ箱から戻す動きなので、戻る矢印に紙を添える。 */
+export const RESTORE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <rect x="13" y="6" width="14" height="18" rx="2" fill="#8cc152" stroke="#3d3730" stroke-width="2"/>
+  <path d="M11 13H6M9 9l-4 4 4 4" fill="none" stroke="#3d3730" stroke-width="2.5"
+    stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
+
+/** 閉じる。 */
+export const CLOSE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <path d="M9 9l14 14M23 9L9 23" fill="none" stroke="#3d3730" stroke-width="3" stroke-linecap="round"/>
+</svg>`;
+
+/** あたらしく描く(白い紙 + プラス)。 */
+export const NEW_PAGE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <rect x="7" y="4" width="18" height="24" rx="3" fill="#fffdf7" stroke="#3d3730" stroke-width="2"/>
+  <path d="M16 11v10M11 16h10" fill="none" stroke="#4aa3df" stroke-width="3" stroke-linecap="round"/>
+</svg>`;

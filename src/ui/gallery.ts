@@ -8,6 +8,10 @@
 // 仕様書§7.5「消えない設計」に従い、「すてる」はゴミばこ行き(フラグを立てるだけ)。
 // ゴミばこは一覧から覗けて、いつでも「とりもどす」ができる。
 import type { WorkRecord } from "../core/model.ts";
+import type { LabelPart } from "../core/tools.ts";
+import { TOOL_DEFS } from "../core/tools.ts";
+import { plainText, renderRuby } from "./label.ts";
+import { CLOSE_SVG, NEW_PAGE_SVG, RESTORE_SVG, TRASH_SVG } from "./icons.ts";
 
 export interface GalleryHandlers {
   onOpen: (id: string) => void;
@@ -18,12 +22,52 @@ export interface GalleryHandlers {
 
 export type GalleryTab = "works" | "trash";
 
-/** 日付は子どもが読める形に。年は同じ年なら出さない。 */
-export function formatDate(timestamp: number, now: number): string {
+/**
+ * 日付も他の文言と同じく漢字＋総ルビ(L2)で出す。年は同じ年なら出さない。
+ * 文字列ではなく LabelPart[] を返すのは、L3(ふりがなオフ)へ切り替えるときに
+ * 日付だけ取り残されないようにするため。
+ */
+export function formatDate(timestamp: number, now: number): LabelPart[] {
   const date = new Date(timestamp);
   const today = new Date(now);
-  const md = `${date.getMonth() + 1}がつ${date.getDate()}にち`;
-  return date.getFullYear() === today.getFullYear() ? md : `${date.getFullYear()}ねん${md}`;
+  const monthDay: LabelPart[] = [
+    { base: String(date.getMonth() + 1) },
+    { base: "月", ruby: "がつ" },
+    { base: String(date.getDate()) },
+    { base: "日", ruby: "にち" },
+  ];
+  if (date.getFullYear() === today.getFullYear()) return monthDay;
+  return [{ base: String(date.getFullYear()) }, { base: "年", ruby: "ねん" }, ...monthDay];
+}
+
+/** UI 文言。すべて漢字＋総ルビで持つ。 */
+const TEXT = {
+  works: [{ base: "作品", ruby: "さくひん" }],
+  trash: [{ base: "ゴミ" }, { base: "箱", ruby: "ばこ" }],
+  backToWorks: [{ base: "作品", ruby: "さくひん" }, { base: "に" }, { base: "戻", ruby: "もど" }, { base: "る" }],
+  close: [{ base: "閉", ruby: "と" }, { base: "じる" }],
+  create: [{ base: "新", ruby: "あたら" }, { base: "しく" }, { base: "描", ruby: "か" }, { base: "く" }],
+  // ツールバーの「描く」と字を揃える(同じ行為に別の字を当てない)。
+  now: [{ base: "今", ruby: "いま" }, { base: "描", ruby: "か" }, { base: "いてる" }],
+  trashIt: [{ base: "捨", ruby: "す" }, { base: "てる" }],
+  restore: [{ base: "取", ruby: "と" }, { base: "り" }, { base: "戻", ruby: "もど" }, { base: "す" }],
+  empty: [{ base: "ゴミ" }, { base: "箱", ruby: "ばこ" }, { base: "は からっぽ" }],
+} satisfies Record<string, LabelPart[]>;
+
+/** アイコン + 文言(ルビ付き)のボタンを作る。ボタンの形はどこも同じにする。 */
+function createLabeledButton(className: string, iconSvg: string, parts: LabelPart[]): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.className = className;
+  const icon = document.createElement("span");
+  icon.className = "btn-icon";
+  icon.innerHTML = iconSvg;
+  const label = document.createElement("span");
+  label.className = "btn-label";
+  label.appendChild(renderRuby(parts));
+  button.append(icon, label);
+  // ルビが二重に読まれないよう、読み上げにはふりがな抜きの文字列を渡す。
+  button.setAttribute("aria-label", plainText(parts));
+  return button;
 }
 
 export class Gallery {
@@ -45,12 +89,9 @@ export class Gallery {
     this.title = document.createElement("h1");
     this.title.className = "gallery-title";
 
-    this.tabButton = document.createElement("button");
-    this.tabButton.className = "gallery-tab";
+    this.tabButton = createLabeledButton("gallery-tab", TRASH_SVG, TEXT.trash);
 
-    const close = document.createElement("button");
-    close.className = "gallery-close";
-    close.textContent = "とじる";
+    const close = createLabeledButton("gallery-close", CLOSE_SVG, TEXT.close);
     close.addEventListener("click", () => this.close());
 
     header.append(this.title, this.tabButton, close);
@@ -70,8 +111,9 @@ export class Gallery {
   render(works: readonly WorkRecord[], currentId: string | null, now: number): void {
     this.releaseUrls();
     this.grid.textContent = "";
-    this.title.textContent = this.tab === "works" ? "さくひん" : "ゴミばこ";
-    this.tabButton.textContent = this.tab === "works" ? "ゴミばこ" : "さくひんに もどる";
+    this.title.textContent = "";
+    this.title.appendChild(renderRuby(this.tab === "works" ? TEXT.works : TEXT.trash));
+    this.setTabButton();
 
     if (this.tab === "works") this.grid.appendChild(this.createNewCard());
 
@@ -82,15 +124,26 @@ export class Gallery {
     if (this.tab === "trash" && works.length === 0) {
       const empty = document.createElement("p");
       empty.className = "gallery-empty";
-      empty.textContent = "ゴミばこは からっぽ";
+      empty.appendChild(renderRuby(TEXT.empty));
       this.grid.appendChild(empty);
     }
   }
 
+  private setTabButton(): void {
+    const isWorks = this.tab === "works";
+    const icon = this.tabButton.querySelector(".btn-icon");
+    const label = this.tabButton.querySelector(".btn-label");
+    if (icon !== null) icon.innerHTML = isWorks ? TRASH_SVG : (TOOL_DEFS.works.iconSvg ?? "");
+    const parts = isWorks ? TEXT.trash : TEXT.backToWorks;
+    if (label !== null) {
+      label.textContent = "";
+      label.appendChild(renderRuby(parts));
+    }
+    this.tabButton.setAttribute("aria-label", plainText(parts));
+  }
+
   private createNewCard(): HTMLElement {
-    const card = document.createElement("button");
-    card.className = "gallery-card gallery-new";
-    card.innerHTML = `<span class="gallery-plus">＋</span><span class="gallery-caption">あたらしく かく</span>`;
+    const card = createLabeledButton("gallery-card gallery-new", NEW_PAGE_SVG, TEXT.create);
     card.addEventListener("click", () => this.handlers.onCreate());
     return card;
   }
@@ -117,17 +170,15 @@ export class Gallery {
 
     const caption = document.createElement("div");
     caption.className = "gallery-caption";
-    caption.textContent = work.id === currentId ? "いま かいてる" : formatDate(work.updatedAt, now);
+    caption.appendChild(renderRuby(work.id === currentId ? TEXT.now : formatDate(work.updatedAt, now)));
 
-    const action = document.createElement("button");
-    action.className = "gallery-action";
-    if (this.tab === "works") {
-      action.textContent = "すてる";
-      action.addEventListener("click", () => this.handlers.onTrash(work.id));
-    } else {
-      action.textContent = "とりもどす";
-      action.addEventListener("click", () => this.handlers.onRestore(work.id));
-    }
+    const action =
+      this.tab === "works"
+        ? createLabeledButton("gallery-action", TRASH_SVG, TEXT.trashIt)
+        : createLabeledButton("gallery-action", RESTORE_SVG, TEXT.restore);
+    action.addEventListener("click", () =>
+      this.tab === "works" ? this.handlers.onTrash(work.id) : this.handlers.onRestore(work.id),
+    );
 
     card.append(open, caption, action);
     return card;

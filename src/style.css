@@ -363,6 +363,30 @@ ruby > rt {
 }
 
 .gallery-tab,
+.gallery-close,
+.gallery-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* アイコン付きボタンの共通形。アイコンは文言の左に置いて大きさを揃える。 */
+.btn-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+}
+
+.btn-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.gallery-tab,
 .gallery-close {
   min-height: 56px;
   padding: 0 20px;
@@ -459,8 +483,11 @@ ruby > rt {
 .gallery-new {
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 10px;
   min-height: 200px;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
   border: 4px dashed var(--line);
   background: var(--paper);
   cursor: pointer;
@@ -471,10 +498,15 @@ ruby > rt {
   transform: scale(0.94);
 }
 
-.gallery-plus {
-  font-size: 56px;
-  line-height: 1;
-  color: var(--accent);
+/* 「新しく描く」カードのアイコンだけは大きく見せる(白紙そのものに見せたい)。 */
+.gallery-new .btn-icon {
+  width: 72px;
+  height: 72px;
+}
+
+.gallery-new .btn-icon svg {
+  width: 72px;
+  height: 72px;
 }
 
 .gallery-empty {
