@@ -179,8 +179,19 @@ export class Surface {
     const key = row * BEAD_COLS + col;
     if (stroke.placedCells.has(key)) return;
     stroke.placedCells.add(key);
+    this.paintCell(col, row, stroke.style.erase ? null : stroke.style.color);
+    stroke.drewAnything = true;
+    stroke.dirty.add(col * BEAD_CELL_WIDTH, row * BEAD_CELL_HEIGHT, 0);
+    stroke.dirty.add((col + 1) * BEAD_CELL_WIDTH, (row + 1) * BEAD_CELL_HEIGHT, 0);
+  }
 
-    // マスの境界は実数なので、隣と 1px の隙間ができないよう外側へ丸める。
+  /**
+   * マス 1 つを塗る。color=null で消す。
+   * 実物のビーズに合わせて **穴あきの円** で描く。四角で埋めるより、
+   * 出来上がりの見た目に近く、図案としても数えやすい。
+   */
+  private paintCell(col: number, row: number, color: string | null): void {
+    // マスの境界は実数なので、消すときは外側へ丸めて隣に残りかすを作らない。
     const left = Math.floor(col * BEAD_CELL_WIDTH);
     const top = Math.floor(row * BEAD_CELL_HEIGHT);
     const right = Math.ceil((col + 1) * BEAD_CELL_WIDTH);
@@ -188,17 +199,99 @@ export class Surface {
 
     const ctx = this.ctx;
     ctx.save();
-    if (stroke.style.erase) {
-      ctx.clearRect(left, top, right - left, bottom - top);
-    } else {
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.fillRect(left, top, right - left, bottom - top);
+    if (color !== null) {
+      const cx = (col + 0.5) * BEAD_CELL_WIDTH;
+      const cy = (row + 0.5) * BEAD_CELL_HEIGHT;
+      const outer = Math.min(BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT) * 0.46;
       ctx.globalCompositeOperation = "source-over";
-      ctx.fillStyle = stroke.style.color;
-      ctx.fillRect(left, top, right - left, bottom - top);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(cx, cy, outer, 0, Math.PI * 2);
+      ctx.fill();
+      // 真ん中の穴。アイロンをかけると溶けて縮むので、小さめにして仕上がりに寄せる。
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.beginPath();
+      ctx.arc(cx, cy, outer * 0.17, 0, Math.PI * 2);
+      ctx.fill();
     }
     ctx.restore();
-    stroke.drewAnything = true;
-    stroke.dirty.add(left, top, 0);
-    stroke.dirty.add(right, bottom, 0);
+  }
+
+  /**
+   * ビーズモードの塗りつぶし。**マス単位**で広がる。
+   * 円で置くと隙間ができるので、画素をたどる塗りつぶしでは背景ごと漏れてしまう。
+   * マスの中心の色を見て、同じ色のマスへ伝播させる。
+   */
+  fillCells(x: number, y: number, color: string): FillRect | null {
+    const image = this.ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const hex = (value: number): string => value.toString(16).padStart(2, "0");
+    /**
+     * そのマスに置かれているビーズの色。空なら "empty"。
+     *
+     * ビーズは真ん中に穴が空いているので、**中心を見てはいけない**
+     * (穴＝透明なので、置いてあるのに「空」と判定して塗りが全面へ漏れる)。
+     * 中心を外した輪の上を何点か見て、最初に見つかった色を採る。
+     */
+    const colorAt = (col: number, row: number): string => {
+      const cx = (col + 0.5) * BEAD_CELL_WIDTH;
+      const cy = (row + 0.5) * BEAD_CELL_HEIGHT;
+      const ring = Math.min(BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT) * 0.3;
+      const probes: [number, number][] = [
+        [cx + ring, cy],
+        [cx - ring, cy],
+        [cx, cy + ring],
+        [cx, cy - ring],
+      ];
+      for (const [px, py] of probes) {
+        const ix = Math.min(CANVAS_WIDTH - 1, Math.max(0, Math.floor(px)));
+        const iy = Math.min(CANVAS_HEIGHT - 1, Math.max(0, Math.floor(py)));
+        const offset = (iy * CANVAS_WIDTH + ix) * 4;
+        if ((image.data[offset + 3] ?? 0) < 8) continue;
+        return `#${hex(image.data[offset] ?? 0)}${hex(image.data[offset + 1] ?? 0)}${hex(image.data[offset + 2] ?? 0)}`;
+      }
+      return "empty";
+    };
+
+    const start = beadCellOf(x, y);
+    const target = colorAt(start.col, start.row);
+    if (target === color.toLowerCase()) return null;
+
+    const seen = new Uint8Array(BEAD_COLS * BEAD_ROWS);
+    const stack = [start];
+    let minCol = start.col;
+    let maxCol = start.col;
+    let minRow = start.row;
+    let maxRow = start.row;
+    while (stack.length > 0) {
+      const cell = stack.pop() as { col: number; row: number };
+      if (cell.col < 0 || cell.row < 0 || cell.col >= BEAD_COLS || cell.row >= BEAD_ROWS) continue;
+      const key = cell.row * BEAD_COLS + cell.col;
+      if (seen[key] === 1) continue;
+      if (colorAt(cell.col, cell.row) !== target) continue;
+      seen[key] = 1;
+      this.paintCell(cell.col, cell.row, color);
+      if (cell.col < minCol) minCol = cell.col;
+      if (cell.col > maxCol) maxCol = cell.col;
+      if (cell.row < minRow) minRow = cell.row;
+      if (cell.row > maxRow) maxRow = cell.row;
+      stack.push(
+        { col: cell.col - 1, row: cell.row },
+        { col: cell.col + 1, row: cell.row },
+        { col: cell.col, row: cell.row - 1 },
+        { col: cell.col, row: cell.row + 1 },
+      );
+    }
+
+    const left = Math.floor(minCol * BEAD_CELL_WIDTH);
+    const top = Math.floor(minRow * BEAD_CELL_HEIGHT);
+    return {
+      x: left,
+      y: top,
+      width: Math.ceil((maxCol + 1) * BEAD_CELL_WIDTH) - left,
+      height: Math.ceil((maxRow + 1) * BEAD_CELL_HEIGHT) - top,
+    };
   }
 
   extendStroke(id: number, x: number, y: number, time = 0, pressure?: number): void {

@@ -7,7 +7,7 @@
 //   5. リロードしても絵が残っている
 //   6. iPad(指)と PC(マウス)の両方で成立する
 import "./style.css";
-import { CRAYON_COLORS, ERASER_SIZES, PEN_SIZES } from "./core/palette.ts";
+import { BEAD_COLORS, CRAYON_COLORS, ERASER_SIZES, nearestBeadColor, PEN_SIZES } from "./core/palette.ts";
 import { NIB_DEFS, NIB_ORDER, type NibId } from "./core/brush.ts";
 import { GRID_MODES, GRID_MODE_ORDER, type GridMode } from "./core/grid.ts";
 import {
@@ -29,7 +29,7 @@ import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
 import { Gallery } from "./ui/gallery.ts";
-import { SOUND_OFF_SVG, SOUND_ON_SVG } from "./ui/icons.ts";
+import { FIT_SVG, SOUND_OFF_SVG, SOUND_ON_SVG } from "./ui/icons.ts";
 
 /** 描き終わってから保存するまでの待ち時間。描画中に保存すると重い。 */
 const AUTOSAVE_DELAY_MS = 800;
@@ -73,6 +73,7 @@ class App {
   private multiDraw = false;
 
   private input: PointerInputControl | null = null;
+  private fitButton: HTMLElement | null = null;
   /** 紙の見え方(ピンチ拡大・移動)。描画内容には影響しない。 */
   private view: ViewTransform = IDENTITY;
 
@@ -120,6 +121,7 @@ class App {
     this.buildGallery();
     this.renderToolbar();
     this.buildSoundToggle();
+    this.buildFitButton();
     this.installInput(canvas);
     this.input?.setMultiDraw(this.multiDraw);
     this.installWheelZoom(canvas);
@@ -146,25 +148,12 @@ class App {
 
   private buildPanels(): void {
     this.colorPanel = new Panel(document.body, "color-panel");
-    const swatches = document.createElement("div");
-    swatches.className = "swatches";
-    for (const color of CRAYON_COLORS) {
-      const swatch = document.createElement("button");
-      swatch.className = "swatch";
-      swatch.style.background = color;
-      swatch.setAttribute("aria-label", `いろ ${color}`);
-      swatch.addEventListener("click", () => {
-        this.color = color;
-        // 色を選んだら描ける状態に戻す(消しゴムのまま色を選ぶ事故を防ぐ)。
-        if (this.activeTool === "eraser") this.setActiveTool("pen");
-        this.syncSwatches();
-        this.syncColorChip();
-        this.sound.play("poko");
-        this.colorPanel.close();
-      });
-      swatches.appendChild(swatch);
-    }
-    this.colorPanel.element.appendChild(swatches);
+    // 2 組のパレットを持ち、下敷きに応じて出し分ける。
+    // ビーズは実物に無い色で描くと再現できないので、専用の色だけを見せる。
+    this.colorPanel.element.append(
+      this.createSwatches(CRAYON_COLORS, "swatches crayon-swatches"),
+      this.createSwatches(BEAD_COLORS, "swatches bead-swatches"),
+    );
 
     this.penPanel = this.createSizePanel("pen-panel", PEN_SIZES, (size) => {
       this.penSize = size;
@@ -193,6 +182,28 @@ class App {
         if (panel.isOpen && !panel.element.contains(target)) panel.close();
       }
     });
+  }
+
+  private createSwatches(colors: readonly string[], className: string): HTMLElement {
+    const swatches = document.createElement("div");
+    swatches.className = className;
+    for (const color of colors) {
+      const swatch = document.createElement("button");
+      swatch.className = "swatch";
+      swatch.style.background = color;
+      swatch.setAttribute("aria-label", `いろ ${color}`);
+      swatch.addEventListener("click", () => {
+        this.color = color;
+        // 色を選んだら描ける状態に戻す(消しゴムのまま色を選ぶ事故を防ぐ)。
+        if (this.activeTool === "eraser") this.setActiveTool("pen");
+        this.syncSwatches();
+        this.syncColorChip();
+        this.sound.play("poko");
+        this.colorPanel.close();
+      });
+      swatches.appendChild(swatch);
+    }
+    return swatches;
   }
 
   /** 下敷きを選ぶパネル(なし / 方眼 / ビーズ)。将来のドット絵モードもここへ足す。 */
@@ -302,6 +313,20 @@ class App {
       onRevert: (workId, snapshotId) => void this.revertTo(workId, snapshotId),
     });
     this.gallery.onTabChange(() => void this.refreshGallery());
+  }
+
+  /** 拡大しているときだけ現れる「ぜんぶ見る」。押すと等倍に戻る。 */
+  private buildFitButton(): void {
+    const button = document.createElement("button");
+    button.className = "fit-button";
+    button.innerHTML = `${FIT_SVG}<span>ぜんぶ</span>`;
+    button.setAttribute("aria-label", "ぜんぶ見る");
+    button.addEventListener("click", () => {
+      this.applyView(IDENTITY);
+      this.sound.play("shu");
+    });
+    this.stage.appendChild(button);
+    this.fitButton = button;
   }
 
   private buildSoundToggle(): void {
@@ -491,6 +516,13 @@ class App {
    */
   private setGridMode(mode: GridMode): void {
     this.gridMode = mode;
+    // ビーズへ入ったら、選んでいた色をいちばん近いビーズ色へ寄せる
+    // (実物に無い色のまま描かせない)。
+    if (GRID_MODES[mode].snap) {
+      this.color = nearestBeadColor(this.color);
+      this.syncColorChip();
+      this.syncSwatches();
+    }
     this.penPanel.close();
     this.eraserPanel.close();
     this.syncGridButtons();
@@ -502,6 +534,7 @@ class App {
   }
 
   private syncGridButtons(): void {
+    this.colorPanel.element.classList.toggle("is-beads", this.snapToCells);
     this.gridLayer.classList.toggle("is-on", this.gridMode !== "off");
     this.gridLayer.classList.toggle("is-beads", this.gridMode === "beads");
     // ツールバーのボタンには、いま選んでいる下敷きの絵を出す。
@@ -568,7 +601,10 @@ class App {
         }
 
         if (this.activeTool === "fill") {
-          const rect = this.surface.fill(point.x, point.y, hexToRgba(this.color));
+          // ビーズは円で置くので画素をたどる塗りつぶしだと背景へ漏れる。マス単位で広げる。
+          const rect = this.snapToCells
+            ? this.surface.fillCells(point.x, point.y, this.color)
+            : this.surface.fill(point.x, point.y, hexToRgba(this.color));
           if (rect !== null) {
             this.surface.commit(rect);
             this.sound.play("shu");
@@ -653,17 +689,37 @@ class App {
   private applyView(next: ViewTransform): void {
     this.view = clampView(next, this.layoutRect(), window.innerWidth, window.innerHeight);
     this.paperWrap.style.transform = toCss(this.view);
+    // 拡大中だけ「ぜんぶ見る」を出す。拡大したまま迷子になるのを防ぐ安全弁。
+    this.fitButton?.classList.toggle("is-visible", this.view.scale > 1.02);
   }
 
-  /** PC 向け。ホイール(トラックパッドのピンチ含む)で拡大する。 */
+  /**
+   * PC 向けのホイール操作。タッチは 2 本指(ピンチ=拡大 / ドラッグ=移動)で完結するが、
+   * PC には指が 2 本無いので割り当てが要る。ブラウザや Figma / Photoshop と同じ作法にする:
+   *
+   *   ホイール        … 上下に移動
+   *   Shift + ホイール … 左右に移動
+   *   Ctrl(⌘) + ホイール … 拡大・縮小
+   *
+   * トラックパッドのピンチは ctrlKey 付きのホイールとして届くので、
+   * この割り当てだと「2 本指でこする=移動、つまむ=拡大」が自然に一致する。
+   */
   private installWheelZoom(canvas: HTMLCanvasElement): void {
     canvas.addEventListener(
       "wheel",
       (event) => {
         event.preventDefault();
         if (this.multiDraw) return;
-        const factor = Math.exp(-event.deltaY * 0.002);
-        this.applyView(zoomAt(this.view, this.layoutRect(), event.clientX, event.clientY, factor));
+        if (event.ctrlKey || event.metaKey) {
+          const factor = Math.exp(-event.deltaY * 0.002);
+          this.applyView(zoomAt(this.view, this.layoutRect(), event.clientX, event.clientY, factor));
+          return;
+        }
+        // 等倍のときは動かしても意味がない(紙は画面に収まっている)。
+        if (this.view.scale <= 1.001) return;
+        const dx = event.shiftKey ? -event.deltaY : -event.deltaX;
+        const dy = event.shiftKey ? 0 : -event.deltaY;
+        this.applyView(panBy(this.view, dx, dy));
       },
       { passive: false },
     );

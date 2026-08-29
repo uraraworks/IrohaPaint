@@ -53,3 +53,9 @@ export const HISTORY_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
   <path d="M5 6v5h5" fill="none" stroke="#3d3730" stroke-width="2.5" stroke-linecap="round"
     stroke-linejoin="round"/>
 </svg>`;
+
+/** ぜんぶ見る(等倍に戻す)。四隅の角で「画面に収める」を表す。 */
+export const FIT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="#3d3730"
+  stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 12V6h6M20 6h6v6M26 20v6h-6M12 26H6v-6"/>
+</svg>`;

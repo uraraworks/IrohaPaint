@@ -15,6 +15,62 @@ export const CRAYON_COLORS: readonly string[] = [
   "#ffffff", // しろ
 ];
 
+/**
+ * アイロンビーズの色。実物の基本セット(パーラー / ハマビーズ等)にある色へ寄せてある。
+ *
+ * クレヨン 12 色のまま図案を描くと、**手元に無い色で描いてしまい再現できない**。
+ * 「画面で描いたものが手元の立体になる」ことが狙いなので、
+ * ビーズモードのときはこちらのパレットに差し替える。
+ * 並びは色相順(白・肌・茶・灰・黒は最後にまとめる)。
+ */
+export const BEAD_COLORS: readonly string[] = [
+  "#e4322b", // あか
+  "#a32020", // あかちゃ
+  "#ff8a00", // オレンジ
+  "#ffd400", // きいろ
+  "#f6ea8c", // クリーム
+  "#a6ce39", // きみどり
+  "#46b04a", // みどり
+  "#1e7a3c", // ふかみどり
+  "#62c3ea", // みずいろ
+  "#1f6fd0", // あお
+  "#1b3f8b", // こんいろ
+  "#8b5ca8", // むらさき
+  "#c3a3dc", // ふじいろ
+  "#e9538a", // こいピンク
+  "#ff8fb1", // ピンク
+  "#f3c6a5", // はだいろ
+  "#c08b4e", // うすちゃ
+  "#7a4b25", // ちゃいろ
+  "#ffffff", // しろ
+  "#d9d9d9", // うすはいいろ
+  "#9aa0a6", // はいいろ
+  "#545a60", // こいはいいろ
+  "#1b1b1b", // くろ
+  "#00a3a3", // ターコイズ
+];
+
+/** いちばん近いビーズ色を返す。ビーズモードへ入ったとき、選んでいた色を寄せるのに使う。 */
+export function nearestBeadColor(hex: string): string {
+  const parse = (value: string): [number, number, number] => [
+    Number.parseInt(value.slice(1, 3), 16),
+    Number.parseInt(value.slice(3, 5), 16),
+    Number.parseInt(value.slice(5, 7), 16),
+  ];
+  const [r, g, b] = parse(hex);
+  let best = BEAD_COLORS[0] ?? "#1b1b1b";
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of BEAD_COLORS) {
+    const [cr, cg, cb] = parse(candidate);
+    const distance = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2;
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate;
+    }
+  }
+  return best;
+}
+
 /** ふでの太さ 3 段階(キャンバス実解像度 1748px 幅に対する px)。 */
 export const PEN_SIZES: readonly number[] = [10, 26, 60];
 

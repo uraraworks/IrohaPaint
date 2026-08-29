@@ -199,6 +199,41 @@ body {
   height: 32px;
 }
 
+/* 拡大しているときだけ出る「ぜんぶ見る」。押すと等倍に戻る。 */
+.fit-button {
+  position: absolute;
+  top: 12px;
+  right: 80px;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.fit-button.is-visible {
+  display: flex;
+}
+
+.fit-button:active {
+  transform: scale(0.88);
+}
+
+.fit-button svg {
+  width: 24px;
+  height: 24px;
+}
+
 /* --- ツールバー --- */
 
 .toolbar {
@@ -378,6 +413,26 @@ ruby > rt {
   display: grid;
   grid-template-columns: repeat(6, 68px);
   gap: 12px;
+}
+
+/* パレットは 2 組(クレヨン / ビーズ)を持ち、下敷きに応じて出し分ける。 */
+.bead-swatches {
+  display: none;
+  grid-template-columns: repeat(6, 56px);
+  gap: 10px;
+}
+
+.color-panel.is-beads .crayon-swatches {
+  display: none;
+}
+
+.color-panel.is-beads .bead-swatches {
+  display: grid;
+}
+
+.bead-swatches .swatch {
+  width: 56px;
+  height: 56px;
 }
 
 .swatch {

@@ -6,6 +6,7 @@ import {
   taperRatio,
   widthRatioForSpeed,
 } from "../src/core/brush.ts";
+import { nearestBeadColor } from "../src/core/palette.ts";
 
 const gpen = NIB_DEFS.gpen.dynamics;
 const crayon = NIB_DEFS.crayon.dynamics;
@@ -75,5 +76,18 @@ describe("strokeWidth", () => {
 
   it("どれだけ細くなっても消えない", () => {
     expect(strokeWidth(26, gpen, 999, undefined, 0, 0)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("nearestBeadColor", () => {
+  it("ビーズにある色はそのまま", () => {
+    expect(nearestBeadColor("#e4322b")).toBe("#e4322b");
+  });
+
+  it("無い色はいちばん近いビーズ色に寄せる", () => {
+    // クレヨンの赤 → ビーズの赤
+    expect(nearestBeadColor("#e2544a")).toBe("#e4322b");
+    // 紙の色に近いごく薄い色 → しろ
+    expect(nearestBeadColor("#fffdf7")).toBe("#ffffff");
   });
 });
