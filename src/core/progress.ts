@@ -20,6 +20,8 @@ export interface Progress {
   nib: NibId;
   /** 「みんなで描く」モード。 */
   multiDraw: boolean;
+  /** アイロンビーズ / ドット絵モード。 */
+  beads: boolean;
 }
 
 export function loadProgress(): Progress {
@@ -30,6 +32,7 @@ export function loadProgress(): Progress {
     grid: false,
     nib: "crayon",
     multiDraw: false,
+    beads: false,
   };
   try {
     const raw = localStorage.getItem(KEY);
@@ -47,6 +50,7 @@ export function loadProgress(): Progress {
       grid: parsed.grid === true,
       nib: isNibId(parsed.nib) ? parsed.nib : "crayon",
       multiDraw: parsed.multiDraw === true,
+      beads: parsed.beads === true,
     };
   } catch {
     // プライベートブラウズ等で localStorage が使えなくても描けることを優先する。

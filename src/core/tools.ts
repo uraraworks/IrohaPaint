@@ -12,6 +12,7 @@ export type ToolId =
   | "undo"
   | "redo"
   | "grid"
+  | "beads"
   | "together"
   | "works"
   | "done"
@@ -116,6 +117,22 @@ export const TOOL_DEFS: Readonly<Record<ToolId, ToolDef>> = {
     </svg>`,
     description: "したじきの マスを だしたり けしたり できるよ",
   },
+  // アイロンビーズ / ドット絵モード。マスにしか置けない代わりに、
+  // 描いた図案を見ながら実物のビーズを並べられる。
+  beads: {
+    id: "beads",
+    label: [{ base: "ビーズ" }],
+    icon: "🔴",
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="4" y="4" width="24" height="24" rx="3" fill="#fffdf7" stroke="#3d3730"
+        stroke-width="2"/>
+      <circle cx="11" cy="11" r="3.4" fill="#e2544a" stroke="#3d3730" stroke-width="1.6"/>
+      <circle cx="21" cy="11" r="3.4" fill="#f3c64b" stroke="#3d3730" stroke-width="1.6"/>
+      <circle cx="11" cy="21" r="3.4" fill="#4aa3df" stroke="#3d3730" stroke-width="1.6"/>
+      <circle cx="21" cy="21" r="3.4" fill="#8cc152" stroke="#3d3730" stroke-width="1.6"/>
+    </svg>`,
+    description: "マスに ビーズを ならべられるよ",
+  },
   // みんなで描くモード。触れた指がぜんぶ線になる代わりに、拡大と戻るは止まる。
   together: {
     id: "together",
@@ -199,6 +216,7 @@ export const INITIAL_TOOLS: readonly ToolId[] = [
   "undo",
   "redo",
   "grid",
+  "beads",
   "together",
   "works",
   "done",

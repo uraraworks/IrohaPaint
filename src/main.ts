@@ -69,6 +69,8 @@ class App {
   private readonly lastPoints = new Map<number, { x: number; y: number }>();
   /** 「みんなで描く」モード。同時に何本も描ける代わりに、拡大と戻るを止める。 */
   private multiDraw = false;
+  /** アイロンビーズ / ドット絵モード。マスにしか置けなくなる。 */
+  private beads = false;
   private input: PointerInputControl | null = null;
   /** 紙の見え方(ピンチ拡大・移動)。描画内容には影響しない。 */
   private view: ViewTransform = IDENTITY;
@@ -89,6 +91,7 @@ class App {
     this.gridOn = progress.grid;
     this.nib = progress.nib;
     this.multiDraw = progress.multiDraw;
+    this.beads = progress.beads;
 
     this.stage = document.createElement("div");
     this.stage.className = "stage";
@@ -116,6 +119,7 @@ class App {
     this.buildGallery();
     this.renderToolbar();
     this.syncGrid();
+    this.syncBeads();
     this.buildSoundToggle();
     this.installInput(canvas);
     this.input?.setMultiDraw(this.multiDraw);
@@ -299,6 +303,7 @@ class App {
     this.syncActive();
     this.syncHistoryButtons();
     this.syncGrid();
+    this.syncBeads();
     this.syncMultiDraw();
   }
 
@@ -364,7 +369,8 @@ class App {
     switch (id) {
       case "pen":
         this.setActiveTool("pen");
-        this.penPanel.toggle(button);
+        // ビーズモードには太さもペン先も無いのでパネルを出さない。
+        if (!this.beads) this.penPanel.toggle(button);
         this.sound.play("poko");
         break;
       case "color":
@@ -373,7 +379,7 @@ class App {
         break;
       case "eraser":
         this.setActiveTool("eraser");
-        this.eraserPanel.toggle(button);
+        if (!this.beads) this.eraserPanel.toggle(button);
         this.sound.play("shu");
         break;
       case "picker":
@@ -398,11 +404,16 @@ class App {
           this.afterHistoryChange();
         }
         break;
+      case "beads":
+        this.setBeads(!this.beads);
+        this.sound.play(this.beads ? "fanfare" : "poko");
+        break;
       case "together":
         this.setMultiDraw(!this.multiDraw);
         this.sound.play(this.multiDraw ? "fanfare" : "poko");
         break;
       case "grid":
+        if (this.beads) break;
         this.gridOn = !this.gridOn;
         this.syncGrid();
         this.persistProgress();
@@ -444,6 +455,29 @@ class App {
   private syncMultiDraw(): void {
     this.buttons.get("together")?.classList.toggle("is-active", this.multiDraw);
     this.root.classList.toggle("is-multi-draw", this.multiDraw);
+  }
+
+  /**
+   * アイロンビーズ / ドット絵モード。
+   * マス目にしか置けない代わりに、描いた図案を見ながら実物のビーズを並べられる。
+   * 太さもペン先も持たない(1 マス = 1 ビーズなので、そもそも太さの概念が無い)。
+   */
+  private setBeads(enabled: boolean): void {
+    this.beads = enabled;
+    // マス目が見えないと置き場所が分からないので、モード中は必ず出す。
+    if (enabled) this.gridOn = true;
+    this.penPanel.close();
+    this.eraserPanel.close();
+    this.syncGrid();
+    this.syncBeads();
+    this.persistProgress();
+  }
+
+  private syncBeads(): void {
+    this.buttons.get("beads")?.classList.toggle("is-active", this.beads);
+    this.gridLayer.classList.toggle("is-beads", this.beads);
+    // モード中は方眼を消せない(消すと置き場所が分からなくなる)。
+    this.buttons.get("grid")?.classList.toggle("is-dim", this.beads);
   }
 
   private syncGrid(): void {
@@ -525,6 +559,7 @@ class App {
             erase: this.activeTool === "eraser",
             // 消しゴムは太さ一定のまま(消す量が変わると狙って消せない)。
             dynamics: this.activeTool === "eraser" ? undefined : NIB_DEFS[this.nib].dynamics,
+            beads: this.beads,
           },
           point.time,
           point.pressure,
@@ -644,6 +679,7 @@ class App {
       grid: this.gridOn,
       nib: this.nib,
       multiDraw: this.multiDraw,
+      beads: this.beads,
     });
   }
 

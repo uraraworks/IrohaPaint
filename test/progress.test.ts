@@ -23,6 +23,7 @@ describe("進捗の保存", () => {
       grid: true,
       nib: "gpen",
       multiDraw: true,
+      beads: true,
     });
     const progress = loadProgress();
     expect(progress.ownedTools).toContain("picker");
@@ -31,6 +32,7 @@ describe("進捗の保存", () => {
     expect(progress.grid).toBe(true);
     expect(progress.nib).toBe("gpen");
     expect(progress.multiDraw).toBe(true);
+    expect(progress.beads).toBe(true);
   });
 
   it("保存データが壊れていても初期道具は必ず揃う", () => {
@@ -59,6 +61,7 @@ describe("進捗の保存", () => {
         grid: false,
         nib: "crayon",
         multiDraw: false,
+        beads: false,
       }),
     ).not.toThrow();
   });

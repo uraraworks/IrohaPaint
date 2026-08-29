@@ -1,6 +1,6 @@
 // 描画面。Canvas 2D を 1 枚だけ持つ(Phase 0 はレイヤー無し)。
 // 「もどる」はパッチ方式(undoStack.ts 参照)。
-import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./model.ts";
+import { BEAD_COLS, BEAD_ROWS, CANVAS_HEIGHT, CANVAS_WIDTH } from "./model.ts";
 import { floodFill, type Rgba } from "./floodFill.ts";
 import { DirtyRect, MAX_STEPS, trimPatches, type FillRect, type UndoPatch } from "./undoStack.ts";
 import { NIB_DEFS, strokeWidth, type NibDynamics } from "./brush.ts";
@@ -15,6 +15,22 @@ export interface StrokeStyle {
   erase: boolean;
   /** ペン先の性質(速さ→太さ・入り抜き・手ブレ補正)。省略時はクレヨン(太さ一定)。 */
   dynamics?: NibDynamics;
+  /**
+   * アイロンビーズ / ドット絵モード。マス単位でしか置けなくなる。
+   * 太さもペン先も効かない(1 マス = 1 ビーズなので、そもそも太さの概念が無い)。
+   */
+  beads?: boolean;
+}
+
+export const BEAD_CELL_WIDTH = CANVAS_WIDTH / BEAD_COLS;
+export const BEAD_CELL_HEIGHT = CANVAS_HEIGHT / BEAD_ROWS;
+
+/** 座標をマス番号へ。範囲外は端に丸める。 */
+export function beadCellOf(x: number, y: number): { col: number; row: number } {
+  return {
+    col: Math.min(BEAD_COLS - 1, Math.max(0, Math.floor(x / BEAD_CELL_WIDTH))),
+    row: Math.min(BEAD_ROWS - 1, Math.max(0, Math.floor(y / BEAD_CELL_HEIGHT))),
+  };
 }
 
 /** 1 本ぶんの描画状態。指(pointerId)ごとに独立して持つ。 */
@@ -33,6 +49,8 @@ interface StrokeState {
   travelled: number;
   pending: PendingPoint[];
   drewAnything: boolean;
+  /** ビーズモードで、この 1 ストロークに既に置いたマス(同じマスを塗り直さない)。 */
+  placedCells: Set<number>;
   /** 仮インクを描いた範囲(消すときに使う)。 */
   overlayDirty: FillRect | null;
 }
@@ -144,15 +162,66 @@ export class Surface {
       travelled: 0,
       drewAnything: false,
       overlayDirty: null,
+      placedCells: new Set<number>(),
       // 入り抜きのある先端は、描き終わりが分かるまで描けない。
       // 末尾を少しだけ保持しておき、endStroke でまとめて細らせながら描く。
       pending: [{ x, y, speed: 0, pressure, distance: 0 }],
     });
+    if (style.beads === true) {
+      const stroke = this.strokes.get(id);
+      if (stroke !== undefined) this.placeBead(stroke, x, y);
+    }
+  }
+
+  /** マス目に 1 つ置く。同じマスは 1 ストロークにつき 1 回だけ塗る。 */
+  private placeBead(stroke: StrokeState, x: number, y: number): void {
+    const { col, row } = beadCellOf(x, y);
+    const key = row * BEAD_COLS + col;
+    if (stroke.placedCells.has(key)) return;
+    stroke.placedCells.add(key);
+
+    // マスの境界は実数なので、隣と 1px の隙間ができないよう外側へ丸める。
+    const left = Math.floor(col * BEAD_CELL_WIDTH);
+    const top = Math.floor(row * BEAD_CELL_HEIGHT);
+    const right = Math.ceil((col + 1) * BEAD_CELL_WIDTH);
+    const bottom = Math.ceil((row + 1) * BEAD_CELL_HEIGHT);
+
+    const ctx = this.ctx;
+    ctx.save();
+    if (stroke.style.erase) {
+      ctx.clearRect(left, top, right - left, bottom - top);
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.fillStyle = stroke.style.color;
+      ctx.fillRect(left, top, right - left, bottom - top);
+    }
+    ctx.restore();
+    stroke.drewAnything = true;
+    stroke.dirty.add(left, top, 0);
+    stroke.dirty.add(right, bottom, 0);
   }
 
   extendStroke(id: number, x: number, y: number, time = 0, pressure?: number): void {
     const stroke = this.strokes.get(id);
     if (stroke === undefined) return;
+
+    if (stroke.style.beads === true) {
+      // 速く動かすとイベントが飛ぶので、前の点との間を補間して通過したマスを埋める。
+      // 手ブレ補正も速さによる太さも要らない(マスに吸着するので意味を持たない)。
+      const steps = Math.ceil(
+        Math.max(
+          Math.abs(x - stroke.lastX) / BEAD_CELL_WIDTH,
+          Math.abs(y - stroke.lastY) / BEAD_CELL_HEIGHT,
+        ),
+      );
+      for (let i = 1; i <= Math.max(1, steps); i += 1) {
+        const t = i / Math.max(1, steps);
+        this.placeBead(stroke, stroke.lastX + (x - stroke.lastX) * t, stroke.lastY + (y - stroke.lastY) * t);
+      }
+      stroke.lastX = x;
+      stroke.lastY = y;
+      return;
+    }
 
     // 手ブレ補正。指の細かい揺れを吸収する。数フレームぶん遅れるが、
     // 線の見た目が落ち着く効果の方がはるかに大きい。
@@ -214,6 +283,8 @@ export class Surface {
     if (stroke === undefined) return null;
     this.strokes.delete(id);
     this.clearWetInk(stroke);
+
+    if (stroke.style.beads === true) return stroke.dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
 
     // 手ブレ補正の分だけ描画点は指より後ろにいる。離した位置まで最後に伸ばして
     // 「線が指まで届かない」感じを消す。

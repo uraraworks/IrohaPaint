@@ -13,6 +13,14 @@
 export const CANVAS_WIDTH = 1748;
 export const CANVAS_HEIGHT = 1181;
 
+/**
+ * アイロンビーズ / ドット絵モードのマス数。
+ * 1748x1181 を 58x39 で割ると 1 マス ≒ 30px でほぼ正方形になる。
+ * 実物のペグボードは 29x29 が基準なので、ちょうど 2x1.35 枚ぶんの図案が置ける。
+ */
+export const BEAD_COLS = 58;
+export const BEAD_ROWS = 39;
+
 /** スキーマ変更時に上げる。読み込み時に不一致なら復元しない(壊れたデータで起動しない)。 */
 export const SCHEMA_VERSION = 1;
 
