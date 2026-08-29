@@ -44,12 +44,10 @@ export function formatDate(timestamp: number, now: number): LabelPart[] {
   return [{ base: String(date.getFullYear()) }, { base: "年", ruby: "ねん" }, ...monthDay];
 }
 
-/** 履歴は同じ日に何枚も並ぶので、日付に時刻を足す。 */
-export function formatDateTime(timestamp: number, now: number): LabelPart[] {
+/** タイムラインのカードに出す時刻。日付は区切りに出るのでここでは出さない。 */
+export function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
-  const hh = String(date.getHours());
-  const mm = String(date.getMinutes()).padStart(2, "0");
-  return [...formatDate(timestamp, now), { base: " " }, { base: `${hh}:${mm}` }];
+  return `${date.getHours()}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 /** UI 文言。すべて漢字＋総ルビで持つ。 */
@@ -72,6 +70,7 @@ const TEXT = {
   opened: [{ base: "ひらいた とき" }],
   reverted: [{ base: "戻", ruby: "もど" }, { base: "す まえ" }],
   noHistory: [{ base: "まだ ありません" }],
+  nowMark: [{ base: "今", ruby: "いま" }],
   restore: [{ base: "取", ruby: "と" }, { base: "り" }, { base: "戻", ruby: "もど" }, { base: "す" }],
   empty: [{ base: "ゴミ" }, { base: "箱", ruby: "ばこ" }, { base: "は からっぽ" }],
 } satisfies Record<string, LabelPart[]>;
@@ -133,6 +132,7 @@ export class Gallery {
   render(works: readonly WorkRecord[], currentId: string | null, now: number): void {
     this.releaseUrls();
     this.grid.textContent = "";
+    this.grid.className = "gallery-grid";
     this.title.textContent = "";
     this.title.appendChild(renderRuby(this.tab === "works" ? TEXT.works : TEXT.trash));
     this.setTabButton();
@@ -151,32 +151,79 @@ export class Gallery {
     }
   }
 
-  /** 1 つの作品の履歴を並べる。カードの形は作品一覧と同じにする。 */
+  /**
+   * 1 つの作品の履歴を **横に流れるタイムライン** で並べる。
+   * 日付と時刻を数字で読ませると、どれが「さっきの姿」か子どもには判断しづらい。
+   * 左が古く右が新しい 1 本の帯にして、右端(＝今)から左へスライドすると
+   * 過去へ遡る、という位置関係そのもので時間を見せる。
+   */
   renderHistory(work: WorkRecord, now: number): void {
     this.tab = "history";
     this.releaseUrls();
     this.grid.textContent = "";
+    this.grid.className = "gallery-grid is-timeline";
     this.title.textContent = "";
     this.title.appendChild(renderRuby(TEXT.historyTitle));
     this.setTabButton();
 
-    // 新しい順に並べる。探すのはたいてい「さっきの姿」なので。
-    const snapshots = [...work.snapshots].sort((a, b) => b.createdAt - a.createdAt);
-    if (snapshots.length === 0) {
+    if (work.snapshots.length === 0) {
       const empty = document.createElement("p");
       empty.className = "gallery-empty";
       empty.appendChild(renderRuby(TEXT.noHistory));
       this.grid.appendChild(empty);
       return;
     }
+
+    const track = document.createElement("div");
+    track.className = "timeline-track";
+
+    // 古い順(左→右)。時間の流れと並びを一致させる。
+    const snapshots = [...work.snapshots].sort((a, b) => a.createdAt - b.createdAt);
+    let lastDay = "";
     for (const snapshot of snapshots) {
-      this.grid.appendChild(this.createHistoryCard(work.id, snapshot, now));
+      const day = new Date(snapshot.createdAt).toDateString();
+      if (day !== lastDay) {
+        track.appendChild(this.createDayMark(snapshot.createdAt, now));
+        lastDay = day;
+      }
+      track.appendChild(this.createHistoryCard(work.id, snapshot, now));
     }
+    // 右端は「今の絵」。ここが現在地だと分かると、左へ行くほど過去だと伝わる。
+    track.appendChild(this.createNowMark());
+
+    this.grid.appendChild(track);
+    // 現在地(右端)から始める。過去を見たい子だけが左へスライドすればよい。
+    this.grid.scrollLeft = this.grid.scrollWidth;
+  }
+
+  /** 日付の区切り。同じ日の中は時刻だけを見ればよくなる。 */
+  private createDayMark(timestamp: number, now: number): HTMLElement {
+    const mark = document.createElement("div");
+    mark.className = "timeline-daymark";
+    const label = document.createElement("span");
+    label.className = "timeline-daylabel";
+    label.appendChild(renderRuby(formatDate(timestamp, now)));
+    const dot = document.createElement("span");
+    dot.className = "timeline-dot";
+    mark.append(label, dot);
+    return mark;
+  }
+
+  private createNowMark(): HTMLElement {
+    const mark = document.createElement("div");
+    mark.className = "timeline-daymark timeline-now";
+    const label = document.createElement("span");
+    label.className = "timeline-daylabel";
+    label.appendChild(renderRuby(TEXT.nowMark));
+    const dot = document.createElement("span");
+    dot.className = "timeline-dot";
+    mark.append(label, dot);
+    return mark;
   }
 
   private createHistoryCard(workId: string, snapshot: WorkSnapshot, now: number): HTMLElement {
     const card = document.createElement("div");
-    card.className = "gallery-card";
+    card.className = "gallery-card timeline-card";
 
     const thumb = document.createElement("div");
     thumb.className = "gallery-thumb";
@@ -192,7 +239,8 @@ export class Gallery {
 
     const caption = document.createElement("div");
     caption.className = "gallery-caption";
-    caption.appendChild(renderRuby(formatDateTime(snapshot.createdAt, now)));
+    // 日付は区切りに出るので、カードには時刻だけ。
+    caption.textContent = formatTime(snapshot.createdAt);
 
     // どういう場面の姿かを一言添える。「ひらいた とき」が上書き事故の戻し先になる。
     const note = document.createElement("div");
@@ -203,7 +251,10 @@ export class Gallery {
     const action = createLabeledButton("gallery-action", RESTORE_SVG, TEXT.revert);
     action.addEventListener("click", () => this.handlers.onRevert(workId, snapshot.id));
 
-    card.append(thumb, caption, note, action);
+    const dot = document.createElement("span");
+    dot.className = "timeline-dot";
+
+    card.append(thumb, caption, note, action, dot);
     return card;
   }
 

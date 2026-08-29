@@ -463,6 +463,99 @@ ruby > rt {
   font-weight: 700;
 }
 
+/* --- 履歴タイムライン ---
+   左が古く右が新しい 1 本の帯。指で左へスライドすると過去へ遡る。
+   数字を読ませるより、並び順そのもので時間を見せる。 */
+
+.gallery-grid.is-timeline {
+  /* 帯は縦方向の中央に置く。上に張り付くと画面下が間延びして見える。 */
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* 指を離した位置でカードが落ち着く。子どもの雑なスワイプでも半端に止まらない。 */
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+}
+
+.timeline-track {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  width: max-content;
+  min-width: 100%;
+  padding: 8px 18px 26px;
+  flex: none;
+}
+
+/* 時間の軸。ドットはこの線の上に乗る。 */
+.timeline-track::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 32px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+}
+
+.timeline-card {
+  position: relative;
+  width: 240px;
+  flex: none;
+  scroll-snap-align: center;
+  margin-bottom: 22px;
+}
+
+.timeline-dot {
+  position: absolute;
+  bottom: -32px;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  border: 4px solid var(--bar);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* 日付の区切り。カードの間に立てる。 */
+.timeline-daymark {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 92px;
+  /* カードと同じだけ底を空ける。ここを padding にするとドットが軸線から落ちる。 */
+  margin-bottom: 22px;
+}
+
+.timeline-daylabel {
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--bar);
+  box-shadow: var(--shadow);
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.timeline-now .timeline-daylabel {
+  background: var(--accent);
+  color: #fff;
+}
+
+.timeline-now .timeline-dot {
+  background: var(--accent);
+  width: 24px;
+  height: 24px;
+  margin-left: -12px;
+  bottom: -35px;
+}
+
 /* 履歴カードの「ひらいた とき」等の一言。 */
 .gallery-note {
   min-height: 20px;

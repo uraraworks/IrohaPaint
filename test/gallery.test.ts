@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDate } from "../src/ui/gallery.ts";
+import { formatDate, formatTime } from "../src/ui/gallery.ts";
 import { plainText } from "../src/ui/label.ts";
 
 describe("formatDate", () => {
@@ -19,5 +19,12 @@ describe("formatDate", () => {
       "がつ",
       "にち",
     ]);
+  });
+});
+
+describe("formatTime", () => {
+  it("時刻は分を 2 桁で揃える", () => {
+    expect(formatTime(new Date(2026, 7, 29, 9, 5).getTime())).toBe("9:05");
+    expect(formatTime(new Date(2026, 7, 29, 23, 49).getTime())).toBe("23:49");
   });
 });
