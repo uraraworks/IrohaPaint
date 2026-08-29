@@ -241,7 +241,11 @@ body {
 .toolbar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  /* 道具は増えていくので、幅に入り切らなければ必ず折り返す。
+     横スクロールにすると画面外のボタンに気づけず、押せないまま終わる。 */
+  flex-wrap: wrap;
+  gap: 10px;
   padding: 10px 14px;
   background: var(--bar);
   box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
@@ -312,6 +316,8 @@ body {
 .tool-button .label {
   display: block;
   text-align: center;
+  /* 「スポイト」が 2 行に割れると読みにくいので折り返さない。 */
+  white-space: nowrap;
 }
 
 ruby > rt {
@@ -365,14 +371,14 @@ ruby > rt {
   }
 }
 
+/* 「完成！」は右端に寄せず、色と幅で目立たせる
+   (折り返したとき、右端に貼り付くと行によって位置が変わって探しにくい)。 */
 .tool-button.done {
   width: auto;
   padding: 0 22px;
   background: #ffe0b2;
-  margin-left: auto;
 }
 .bar-left .tool-button.done {
-  margin-left: 0;
   margin-top: auto;
   width: var(--btn);
   padding: 0;
@@ -903,17 +909,9 @@ ruby > rt {
   .tool-button .icon {
     font-size: 24px;
   }
+  /* 幅の狭い端末では、長い名前(スポイト等)が折り返さないよう少し詰める。 */
+  .tool-button .label {
+    font-size: 12px;
+  }
 }
 
-/* 横に入り切らない幅(スマホの縦持ち等)では 2 段に折り返す。
-   横スクロールにすると「完成！」が画面外に隠れ、押せないことに気づけない。 */
-@media (max-width: 720px) {
-  .app.bar-bottom .toolbar {
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px;
-  }
-  .app.bar-bottom .tool-button.done {
-    margin-left: 0;
-  }
-}
