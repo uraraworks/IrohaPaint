@@ -768,8 +768,8 @@ function rgbEquals(styleColor: string, hex: string): boolean {
 }
 
 const version = document.getElementById("app-version");
-// package.json の version がビルド時に差し込まれる(vite.config.ts の define)。
-if (version !== null) version.textContent = `v${__APP_VERSION__}`;
+// git commit 由来の版文字列がビルド時に差し込まれる(vite.config.ts の define)。
+if (version !== null) version.textContent = __APP_VERSION__;
 
 const root = document.getElementById("app");
 if (root !== null) new App(root);
