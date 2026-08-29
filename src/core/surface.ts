@@ -39,6 +39,17 @@ export class Surface {
    */
   private readonly backup: HTMLCanvasElement;
   private readonly backupCtx: CanvasRenderingContext2D;
+  /**
+   * 描いている最中の「まだ確定していない末尾」を映す層。
+   *
+   * 入り抜きのある線は、描き終わりが分かるまで末尾を確定できない。
+   * かといって確定するまで何も出さないと、線が指から遅れてついてくる。
+   * そこで末尾はこの層に即座に描いておき(仮のインク)、指を離した時点で
+   * 本番(細らせたもの)をキャンバスへ描いて、この層は消す。
+   */
+  readonly overlay: HTMLCanvasElement;
+  private readonly overlayCtx: CanvasRenderingContext2D;
+  private overlayDirty: FillRect | null = null;
   private patches: UndoPatch[] = [];
   /** 「戻る」で巻き戻した分。新しく描いたら捨てる(一般的なペイントと同じ作法)。 */
   private redoPatches: UndoPatch[] = [];
@@ -71,6 +82,14 @@ export class Surface {
     if (backupCtx === null) throw new Error("2D コンテキストを取得できませんでした");
     this.backup = backup;
     this.backupCtx = backupCtx;
+    const overlay = document.createElement("canvas");
+    overlay.width = CANVAS_WIDTH;
+    overlay.height = CANVAS_HEIGHT;
+    overlay.className = "paper-overlay";
+    const overlayCtx = overlay.getContext("2d");
+    if (overlayCtx === null) throw new Error("2D コンテキストを取得できませんでした");
+    this.overlay = overlay;
+    this.overlayCtx = overlayCtx;
     this.clearToPaper();
     this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
   }
@@ -143,6 +162,71 @@ export class Surface {
       this.pending.shift();
       this.renderPoint(head, Number.POSITIVE_INFINITY, style);
     }
+    this.drawWetInk(style);
+  }
+
+  /** 保持中の末尾を仮のインクとして描く。指に線が遅れてついてくるのを防ぐ。 */
+  private drawWetInk(style: StrokeStyle): void {
+    this.clearWetInk();
+    // 消しゴムは「消えた結果」を重ねて見せられないので仮インクを出さない
+    // (太さ一定なので末尾を保持しておらず、そもそも遅れない)。
+    if (style.erase || this.pending.length === 0 || this.dynamics.taperOutPx <= 0) return;
+
+    const ctx = this.overlayCtx;
+    ctx.save();
+    ctx.strokeStyle = style.color;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    let prevX = this.lastX;
+    let prevY = this.lastY;
+    let prevWidth = this.lastWidth;
+    let minX = prevX;
+    let minY = prevY;
+    let maxX = prevX;
+    let maxY = prevY;
+    let maxWidth = prevWidth;
+    for (const point of this.pending) {
+      // 抜きはまだ掛けない(掛けると、描いている最中だけ細く見えてしまう)。
+      const width = strokeWidth(
+        style.size,
+        this.dynamics,
+        point.speed,
+        point.pressure,
+        point.distance,
+        Number.POSITIVE_INFINITY,
+      );
+      ctx.lineWidth = Math.max(1, (prevWidth + width) / 2);
+      ctx.beginPath();
+      ctx.moveTo(prevX, prevY);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      prevX = point.x;
+      prevY = point.y;
+      prevWidth = width;
+      if (width > maxWidth) maxWidth = width;
+      if (point.x < minX) minX = point.x;
+      if (point.y < minY) minY = point.y;
+      if (point.x > maxX) maxX = point.x;
+      if (point.y > maxY) maxY = point.y;
+    }
+    ctx.restore();
+
+    const pad = Math.ceil(maxWidth) + 2;
+    const x = Math.max(0, Math.floor(minX - pad));
+    const y = Math.max(0, Math.floor(minY - pad));
+    this.overlayDirty = {
+      x,
+      y,
+      width: Math.min(CANVAS_WIDTH, Math.ceil(maxX + pad)) - x,
+      height: Math.min(CANVAS_HEIGHT, Math.ceil(maxY + pad)) - y,
+    };
+  }
+
+  private clearWetInk(): void {
+    const rect = this.overlayDirty;
+    if (rect === null) return;
+    this.overlayCtx.clearRect(rect.x, rect.y, rect.width, rect.height);
+    this.overlayDirty = null;
   }
 
   /**
@@ -150,6 +234,7 @@ export class Surface {
    * 控え(1 手前の状態)から描き戻すので、undo 履歴は消費しない。
    */
   cancelStroke(): void {
+    this.clearWetInk();
     const dirty = this.dirty;
     this.dirty = null;
     this.strokeStyle = null;
@@ -167,7 +252,29 @@ export class Surface {
   }
 
   /** ストロークを確定し、undo 用に変更前の画素を積む。戻り値は変更矩形。 */
-  endStroke(): FillRect | null {
+  endStroke(rawX?: number, rawY?: number): FillRect | null {
+    // 手ブレ補正の分だけ描画点は指より後ろにいる。離した位置まで最後に伸ばして
+    // 「線が指まで届かない」感じを消す。
+    if (rawX !== undefined && rawY !== undefined && this.strokeStyle !== null) {
+      const last = this.pending[this.pending.length - 1];
+      const step = last === undefined ? 0 : Math.hypot(rawX - last.x, rawY - last.y);
+      if (last !== undefined && step > 0.5) {
+        this.travelled += step;
+        this.pending.push({
+          x: rawX,
+          y: rawY,
+          speed: last.speed,
+          pressure: last.pressure,
+          distance: this.travelled,
+        });
+        this.dirty?.add(rawX, rawY, this.strokeStyle.size * this.dynamics.maxWidthRatio);
+      }
+    }
+    return this.finishStroke();
+  }
+
+  private finishStroke(): FillRect | null {
+    this.clearWetInk();
     const dirty = this.dirty;
     const style = this.strokeStyle;
     if (dirty !== null && style !== null) {
@@ -359,6 +466,7 @@ export class Surface {
 
   /** まっさらな紙に戻す(あたらしく描く)。履歴も捨てる。 */
   reset(): void {
+    this.clearWetInk();
     this.clearToPaper();
     this.patches = [];
     this.redoPatches = [];

@@ -66,6 +66,8 @@ class App {
   private saveTimer: number | null = null;
   private lastSnapshotAt = 0;
   private drawing = false;
+  /** 直前に受け取った生の座標(手ブレ補正前)。指を離した位置まで線を伸ばすのに使う。 */
+  private lastPoint: { x: number; y: number } | null = null;
   /** 紙の見え方(ピンチ拡大・移動)。描画内容には影響しない。 */
   private view: ViewTransform = IDENTITY;
 
@@ -103,6 +105,8 @@ class App {
 
     root.append(this.stage, this.toolbar);
     this.surface = new Surface(canvas);
+    // 描いている最中の末尾を映す層(surface.ts の overlay)。方眼より下に敷く。
+    this.paperWrap.insertBefore(this.surface.overlay, this.gridLayer);
     this.guide = new GuideBubble(document.body);
 
     this.buildPanels();
@@ -475,6 +479,7 @@ class App {
         }
 
         this.drawing = true;
+        this.lastPoint = point;
         this.surface.beginStroke(
           point.x,
           point.y,
@@ -491,6 +496,7 @@ class App {
       },
       onMove: (point) => {
         if (!this.drawing) return;
+        this.lastPoint = point;
         this.surface.extendStroke(point.x, point.y, point.time, point.pressure);
       },
       onGestureStart: () => {
@@ -521,7 +527,7 @@ class App {
       onUp: () => {
         if (!this.drawing) return;
         this.drawing = false;
-        const rect = this.surface.endStroke();
+        const rect = this.surface.endStroke(this.lastPoint?.x, this.lastPoint?.y);
         if (rect === null) return;
         this.surface.commit(rect);
         this.countStroke();
