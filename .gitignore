@@ -1,4 +1,8 @@
 node_modules/
 dist/
+# Vite が設定ファイルを読み込むとき、隣に一時ファイルを吐く。
+# 版文字列は git status で dirty を判定するので、これを無視しないと
+# 常に「作業ツリーが汚れている」扱いになる(実際になった)。
+vite.config.ts.timestamp-*.mjs
 .DS_Store
 *.log
