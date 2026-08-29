@@ -6,6 +6,7 @@
 // 量が小さく同期的に読めればよいので localStorage で足りる(IndexedDB は要らない)。
 import { INITIAL_TOOLS, TOOL_DEFS, type ToolId } from "./tools.ts";
 import { isNibId, type NibId } from "./brush.ts";
+import { isGridMode, type GridMode } from "./grid.ts";
 
 const KEY = "iroha-paint:progress";
 
@@ -14,14 +15,12 @@ export interface Progress {
   strokeCount: number;
   /** いま開いている作品。次に起動したときも同じ絵の続きから描けるようにする。 */
   currentWorkId: string | null;
-  /** 方眼マスを出しているか。下敷きの設定なので作品ではなく人に属する。 */
-  grid: boolean;
+  /** 下敷き(なし / 方眼 / ビーズ)。作品ではなく人に属する設定。 */
+  gridMode: GridMode;
   /** 選んでいるペン先。 */
   nib: NibId;
   /** 「みんなで描く」モード。 */
   multiDraw: boolean;
-  /** アイロンビーズ / ドット絵モード。 */
-  beads: boolean;
 }
 
 export function loadProgress(): Progress {
@@ -29,10 +28,9 @@ export function loadProgress(): Progress {
     ownedTools: [...INITIAL_TOOLS],
     strokeCount: 0,
     currentWorkId: null,
-    grid: false,
+    gridMode: "off",
     nib: "crayon",
     multiDraw: false,
-    beads: false,
   };
   try {
     const raw = localStorage.getItem(KEY);
@@ -47,10 +45,9 @@ export function loadProgress(): Progress {
       ownedTools: owned,
       strokeCount: typeof parsed.strokeCount === "number" && parsed.strokeCount >= 0 ? parsed.strokeCount : 0,
       currentWorkId: typeof parsed.currentWorkId === "string" ? parsed.currentWorkId : null,
-      grid: parsed.grid === true,
+      gridMode: isGridMode(parsed.gridMode) ? parsed.gridMode : "off",
       nib: isNibId(parsed.nib) ? parsed.nib : "crayon",
       multiDraw: parsed.multiDraw === true,
-      beads: parsed.beads === true,
     };
   } catch {
     // プライベートブラウズ等で localStorage が使えなくても描けることを優先する。

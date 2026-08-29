@@ -9,6 +9,7 @@
 import "./style.css";
 import { CRAYON_COLORS, ERASER_SIZES, PEN_SIZES } from "./core/palette.ts";
 import { NIB_DEFS, NIB_ORDER, type NibId } from "./core/brush.ts";
+import { GRID_MODES, GRID_MODE_ORDER, type GridMode } from "./core/grid.ts";
 import {
   appendSnapshot,
   createWork,
@@ -55,7 +56,8 @@ class App {
   private color = CRAYON_COLORS[0] ?? "#3d3730";
   private penSize = PEN_SIZES[1] ?? 26;
   private eraserSize = ERASER_SIZES[1] ?? 70;
-  private gridOn = false;
+  /** 下敷き。なし / 方眼 / ビーズ。ビーズはマスにしか置けなくなる。 */
+  private gridMode: GridMode = "off";
   private nib: NibId = "crayon";
   private strokeCount = 0;
   private pendingUnlock: Unlock | null = null;
@@ -69,8 +71,7 @@ class App {
   private readonly lastPoints = new Map<number, { x: number; y: number }>();
   /** 「みんなで描く」モード。同時に何本も描ける代わりに、拡大と戻るを止める。 */
   private multiDraw = false;
-  /** アイロンビーズ / ドット絵モード。マスにしか置けなくなる。 */
-  private beads = false;
+
   private input: PointerInputControl | null = null;
   /** 紙の見え方(ピンチ拡大・移動)。描画内容には影響しない。 */
   private view: ViewTransform = IDENTITY;
@@ -78,6 +79,7 @@ class App {
   private colorPanel!: Panel;
   private penPanel!: Panel;
   private eraserPanel!: Panel;
+  private gridPanel!: Panel;
   private gallery!: Gallery;
 
   constructor(root: HTMLElement) {
@@ -88,10 +90,9 @@ class App {
     this.ownedTools = progress.ownedTools;
     this.strokeCount = progress.strokeCount;
     this.currentWorkId = progress.currentWorkId;
-    this.gridOn = progress.grid;
+    this.gridMode = progress.gridMode;
     this.nib = progress.nib;
     this.multiDraw = progress.multiDraw;
-    this.beads = progress.beads;
 
     this.stage = document.createElement("div");
     this.stage.className = "stage";
@@ -118,8 +119,6 @@ class App {
     this.buildPanels();
     this.buildGallery();
     this.renderToolbar();
-    this.syncGrid();
-    this.syncBeads();
     this.buildSoundToggle();
     this.installInput(canvas);
     this.input?.setMultiDraw(this.multiDraw);
@@ -180,18 +179,46 @@ class App {
       this.setActiveTool("eraser");
       this.sound.play("shu");
     });
+    this.gridPanel = this.createGridPanel();
     this.syncSwatches();
     this.syncSizes();
     this.syncNibs();
+    this.syncGridButtons();
 
     // パネル外タップで閉じる。
     document.addEventListener("pointerdown", (event) => {
       const target = event.target as Node;
       if (this.isToolbarNode(target)) return;
-      for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel]) {
+      for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel]) {
         if (panel.isOpen && !panel.element.contains(target)) panel.close();
       }
     });
+  }
+
+  /** 下敷きを選ぶパネル(なし / 方眼 / ビーズ)。将来のドット絵モードもここへ足す。 */
+  private createGridPanel(): Panel {
+    const panel = new Panel(document.body, "grid-panel");
+    for (const id of GRID_MODE_ORDER) {
+      const def = GRID_MODES[id];
+      const button = document.createElement("button");
+      button.className = "nib-button";
+      button.dataset.grid = id;
+      const icon = document.createElement("span");
+      icon.className = "icon";
+      icon.innerHTML = def.iconSvg;
+      const label = document.createElement("span");
+      label.className = "label";
+      label.appendChild(renderRuby(def.label));
+      button.append(icon, label);
+      button.setAttribute("aria-label", plainText(def.label));
+      button.addEventListener("click", () => {
+        this.setGridMode(id);
+        this.sound.play(id === "off" ? "shu" : "poko");
+        panel.close();
+      });
+      panel.element.appendChild(button);
+    }
+    return panel;
   }
 
   private createNibRow(): HTMLElement {
@@ -302,8 +329,7 @@ class App {
     this.toolbar.appendChild(this.createToolButton("done"));
     this.syncActive();
     this.syncHistoryButtons();
-    this.syncGrid();
-    this.syncBeads();
+    this.syncGridButtons();
     this.syncMultiDraw();
   }
 
@@ -362,15 +388,24 @@ class App {
     // これから開くもの以外は閉じる。開きっぱなしだとパネル同士が重なり、
     // 下のパネルのボタンを押せてしまう。
     const keep =
-      id === "color" ? this.colorPanel : id === "pen" ? this.penPanel : id === "eraser" ? this.eraserPanel : null;
-    for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel]) {
+      id === "color"
+        ? this.colorPanel
+        : id === "pen"
+          ? this.penPanel
+          : id === "eraser"
+            ? this.eraserPanel
+            : id === "grid"
+              ? this.gridPanel
+              : null;
+    for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel]) {
       if (panel !== keep) panel.close();
     }
     switch (id) {
       case "pen":
         this.setActiveTool("pen");
         // ビーズモードには太さもペン先も無いのでパネルを出さない。
-        if (!this.beads) this.penPanel.toggle(button);
+        // ビーズは 1 マス = 1 ビーズなので太さもペン先も無い(パネルを出さない)。
+        if (!this.snapToCells) this.penPanel.toggle(button);
         this.sound.play("poko");
         break;
       case "color":
@@ -379,7 +414,7 @@ class App {
         break;
       case "eraser":
         this.setActiveTool("eraser");
-        if (!this.beads) this.eraserPanel.toggle(button);
+        if (!this.snapToCells) this.eraserPanel.toggle(button);
         this.sound.play("shu");
         break;
       case "picker":
@@ -404,19 +439,12 @@ class App {
           this.afterHistoryChange();
         }
         break;
-      case "beads":
-        this.setBeads(!this.beads);
-        this.sound.play(this.beads ? "fanfare" : "poko");
-        break;
       case "together":
         this.setMultiDraw(!this.multiDraw);
         this.sound.play(this.multiDraw ? "fanfare" : "poko");
         break;
       case "grid":
-        if (this.beads) break;
-        this.gridOn = !this.gridOn;
-        this.syncGrid();
-        this.persistProgress();
+        this.gridPanel.toggle(button);
         this.sound.play("poko");
         break;
       case "works":
@@ -458,37 +486,38 @@ class App {
   }
 
   /**
-   * アイロンビーズ / ドット絵モード。
-   * マス目にしか置けない代わりに、描いた図案を見ながら実物のビーズを並べられる。
-   * 太さもペン先も持たない(1 マス = 1 ビーズなので、そもそも太さの概念が無い)。
+   * 下敷きの切り替え。ビーズは「マスにしか置けない」モードで、
+   * 太さもペン先も持たない(1 マス = 1 ビーズなので太さの概念が無い)。
    */
-  private setBeads(enabled: boolean): void {
-    this.beads = enabled;
-    // マス目が見えないと置き場所が分からないので、モード中は必ず出す。
-    if (enabled) this.gridOn = true;
+  private setGridMode(mode: GridMode): void {
+    this.gridMode = mode;
     this.penPanel.close();
     this.eraserPanel.close();
-    this.syncGrid();
-    this.syncBeads();
+    this.syncGridButtons();
     this.persistProgress();
   }
 
-  private syncBeads(): void {
-    this.buttons.get("beads")?.classList.toggle("is-active", this.beads);
-    this.gridLayer.classList.toggle("is-beads", this.beads);
-    // モード中は方眼を消せない(消すと置き場所が分からなくなる)。
-    this.buttons.get("grid")?.classList.toggle("is-dim", this.beads);
+  private get snapToCells(): boolean {
+    return GRID_MODES[this.gridMode].snap;
   }
 
-  private syncGrid(): void {
-    this.gridLayer.classList.toggle("is-on", this.gridOn);
-    this.buttons.get("grid")?.classList.toggle("is-active", this.gridOn);
+  private syncGridButtons(): void {
+    this.gridLayer.classList.toggle("is-on", this.gridMode !== "off");
+    this.gridLayer.classList.toggle("is-beads", this.gridMode === "beads");
+    // ツールバーのボタンには、いま選んでいる下敷きの絵を出す。
+    const button = this.buttons.get("grid");
+    button?.classList.toggle("is-active", this.gridMode !== "off");
+    const icon = button?.querySelector(".icon");
+    if (icon != null) icon.innerHTML = GRID_MODES[this.gridMode].iconSvg;
+    for (const element of this.gridPanel.element.querySelectorAll<HTMLElement>(".nib-button")) {
+      element.classList.toggle("is-active", element.dataset.grid === this.gridMode);
+    }
   }
 
   private syncActive(): void {
     for (const [id, button] of this.buttons) {
       const isActive =
-        (id === "grid" && this.gridOn) ||
+        (id === "grid" && this.gridMode !== "off") ||
         (id === "pen" && this.activeTool === "pen") ||
         (id === "eraser" && this.activeTool === "eraser") ||
         (id === "picker" && this.activeTool === "picker") ||
@@ -523,6 +552,7 @@ class App {
         this.colorPanel.close();
         this.penPanel.close();
         this.eraserPanel.close();
+        this.gridPanel.close();
 
         if (this.activeTool === "picker") {
           const picked = this.surface.pick(point.x, point.y);
@@ -559,7 +589,7 @@ class App {
             erase: this.activeTool === "eraser",
             // 消しゴムは太さ一定のまま(消す量が変わると狙って消せない)。
             dynamics: this.activeTool === "eraser" ? undefined : NIB_DEFS[this.nib].dynamics,
-            beads: this.beads,
+            beads: this.snapToCells,
           },
           point.time,
           point.pressure,
@@ -676,10 +706,9 @@ class App {
       ownedTools: this.ownedTools,
       strokeCount: this.strokeCount,
       currentWorkId: this.work?.id ?? null,
-      grid: this.gridOn,
+      gridMode: this.gridMode,
       nib: this.nib,
       multiDraw: this.multiDraw,
-      beads: this.beads,
     });
   }
 

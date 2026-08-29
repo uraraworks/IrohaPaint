@@ -398,6 +398,11 @@ ruby > rt {
   box-shadow: 0 0 0 5px var(--accent);
 }
 
+/* 下敷き(なし / 方眼 / ビーズ)を選ぶパネル。ペン先と同じ形のボタンを使う。 */
+.grid-panel {
+  gap: 12px;
+}
+
 /* ペン先(クレヨン / Ｇペン / 筆)。太さの段の上に置く。 */
 .pen-panel {
   flex-direction: column;
