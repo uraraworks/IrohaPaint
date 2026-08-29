@@ -42,6 +42,12 @@ export interface PointerHandlers {
   onGestureEnd?: () => void;
   /** 2 本指タップ = もどる(ibisPaint / Procreate と同じ作法)。 */
   onTwoFingerTap?: () => void;
+  /**
+   * 右クリック = その場で色を吸う(マウスのみ)。
+   * タッチには右クリックが無いが、2 本指を当てても「どのマスの色か」が指で隠れて
+   * 分からないので、タッチでは素直に「スポイト」を押してもらう。
+   */
+  onPick?: (point: CanvasPoint) => void;
 }
 
 /** 2 本指タップと認める最大時間。これより長ければ「置いただけ」。 */
@@ -133,6 +139,12 @@ export function installPointerInput(
   };
 
   const onPointerDown = (event: PointerEvent): void => {
+    // 右クリック(または中クリック以外の副ボタン)は描かずに色を吸う。
+    if (event.pointerType === "mouse" && event.button === 2) {
+      event.preventDefault();
+      handlers.onPick?.(pointOf(event));
+      return;
+    }
     if (multiDraw) {
       // 何本目でも等しく線になる。ジェスチャの判定は一切しない。
       drawing.add(event.pointerId);

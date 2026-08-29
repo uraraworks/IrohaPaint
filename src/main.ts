@@ -588,18 +588,8 @@ class App {
         this.gridPanel.close();
 
         if (this.activeTool === "picker") {
-          // ビーズはマスの輪を見る。中心は穴(透明)なので紙の色を吸ってしまう。
-          const picked = this.snapToCells
-            ? this.surface.pickCell(point.x, point.y)
-            : this.surface.pick(point.x, point.y);
-          if (picked !== null) {
-            this.color = picked;
-            this.syncSwatches();
-            this.syncColorChip();
-            this.sound.play("poko");
-            // スポイトは「吸ったら描ける」まで含めて 1 動作にする。
-            this.setActiveTool("pen");
-          }
+          // スポイトの道具で吸ったときは「吸ったら描ける」まで含めて 1 動作にする。
+          if (this.pickColorAt(point.x, point.y)) this.setActiveTool("pen");
           return;
         }
 
@@ -656,6 +646,11 @@ class App {
       },
       onGestureEnd: () => {
         this.scheduleSave();
+      },
+      onPick: (point) => {
+        // 右クリックは色を吸うだけ。道具は切り替えない
+        // (描いている途中に色だけ変えたい、という使い方のため)。
+        this.pickColorAt(point.x, point.y);
       },
       onTwoFingerTap: () => {
         // 2 本指タップ = もどる。ツールバーまで指を運ばずに失敗を消せる。
@@ -744,6 +739,18 @@ class App {
   private syncColorChip(): void {
     const chip = this.buttons.get("color")?.querySelector<HTMLElement>(".color-chip");
     if (chip !== undefined && chip !== null) chip.style.background = this.color;
+  }
+
+  /** その場所の色を吸う。吸えたら true。 */
+  private pickColorAt(x: number, y: number): boolean {
+    // ビーズはマスの輪を見る。中心は穴(透明)なので紙の色を吸ってしまう。
+    const picked = this.snapToCells ? this.surface.pickCell(x, y) : this.surface.pick(x, y);
+    if (picked === null) return false;
+    this.color = picked;
+    this.syncSwatches();
+    this.syncColorChip();
+    this.sound.play("poko");
+    return true;
   }
 
   private countStroke(): void {
