@@ -24,7 +24,7 @@ describe("進捗の保存", () => {
   });
 
   it("保存データが壊れていても初期道具は必ず揃う", () => {
-    installStorage({ "sodatsu-paint:progress": '{"ownedTools":["nope",42],"strokeCount":-5}' });
+    installStorage({ "iroha-paint:progress": '{"ownedTools":["nope",42],"strokeCount":-5}' });
     const progress = loadProgress();
     expect(progress.ownedTools).toEqual([...INITIAL_TOOLS]);
     expect(progress.strokeCount).toBe(0);

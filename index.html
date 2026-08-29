@@ -8,8 +8,13 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <meta name="theme-color" content="#f4efe6" />
-    <meta name="description" content="ブラウザで開くだけのペイント。道具が増えて育っていきます。" />
-    <title>そだつペイント（仮）</title>
+    <meta name="description" content="宝箱で道具が増えていく、ブラウザで開くだけのペイント。" />
+    <!-- 透過 PNG。下地の色に関係なく置ける(iOS のホーム画面だけは透明が黒く落ちるので別口) -->
+    <link rel="icon" type="image/png" sizes="32x32" href="./icon/leaf-32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="./icon/leaf-16.png" />
+    <link rel="apple-touch-icon" href="./icon/apple-touch-icon.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <title>いろは - Iroha Paint</title>
   </head>
   <body>
     <div id="app" class="app bar-bottom"></div>

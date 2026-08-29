@@ -6,7 +6,7 @@
 // 量が小さく同期的に読めればよいので localStorage で足りる(IndexedDB は要らない)。
 import { INITIAL_TOOLS, TOOL_DEFS, type ToolId } from "./tools.ts";
 
-const KEY = "sodatsu-paint:progress";
+const KEY = "iroha-paint:progress";
 
 export interface Progress {
   ownedTools: ToolId[];

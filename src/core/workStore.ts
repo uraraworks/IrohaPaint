@@ -55,7 +55,9 @@ export class MemoryWorkStore implements WorkStore {
   }
 }
 
-const DB_NAME = "sodatsu-paint";
+// 公開前に名称が「いろは」に決まったので DB 名も合わせる。
+// 未公開＝実ユーザーのデータが無いうちにしか変えられない(変えると旧 DB は参照されなくなる)。
+const DB_NAME = "iroha-paint";
 const DB_VERSION = 1;
 const STORE_NAME = "works";
 

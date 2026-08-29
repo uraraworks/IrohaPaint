@@ -1,0 +1,17 @@
+{
+  "name": "いろは - Iroha Paint",
+  "short_name": "いろは",
+  "description": "宝箱で道具が増えていく、ブラウザで開くだけのペイント。",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4efe6",
+  "theme_color": "#f4efe6",
+  "icons": [
+    { "src": "./icon/leaf-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icon/leaf-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "./icon/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

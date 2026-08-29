@@ -672,3 +672,16 @@ ruby > rt {
     font-size: 24px;
   }
 }
+
+/* 横に入り切らない幅(スマホの縦持ち等)では 2 段に折り返す。
+   横スクロールにすると「完成！」が画面外に隠れ、押せないことに気づけない。 */
+@media (max-width: 720px) {
+  .app.bar-bottom .toolbar {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+  .app.bar-bottom .tool-button.done {
+    margin-left: 0;
+  }
+}
