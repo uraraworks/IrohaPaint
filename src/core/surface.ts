@@ -25,6 +25,25 @@ export interface StrokeStyle {
 export const BEAD_CELL_WIDTH = CANVAS_WIDTH / BEAD_COLS;
 export const BEAD_CELL_HEIGHT = CANVAS_HEIGHT / BEAD_ROWS;
 
+/**
+ * マスの色を見るための位置(中心から少しずらした 4 点)。
+ *
+ * ビーズは真ん中に穴が空いているので **中心を見てはいけない**。
+ * 穴＝透明なので、置いてあるのに「何も無い」と判定してしまう
+ * (塗りつぶしが全面へ漏れる / スポイトが紙の色を吸う、という形で実際に出た)。
+ */
+export function beadProbePoints(col: number, row: number): [number, number][] {
+  const cx = (col + 0.5) * BEAD_CELL_WIDTH;
+  const cy = (row + 0.5) * BEAD_CELL_HEIGHT;
+  const ring = Math.min(BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT) * 0.3;
+  return [
+    [cx + ring, cy],
+    [cx - ring, cy],
+    [cx, cy + ring],
+    [cx, cy - ring],
+  ];
+}
+
 /** 座標をマス番号へ。範囲外は端に丸める。 */
 export function beadCellOf(x: number, y: number): { col: number; row: number } {
   return {
@@ -227,24 +246,9 @@ export class Surface {
   fillCells(x: number, y: number, color: string): FillRect | null {
     const image = this.ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     const hex = (value: number): string => value.toString(16).padStart(2, "0");
-    /**
-     * そのマスに置かれているビーズの色。空なら "empty"。
-     *
-     * ビーズは真ん中に穴が空いているので、**中心を見てはいけない**
-     * (穴＝透明なので、置いてあるのに「空」と判定して塗りが全面へ漏れる)。
-     * 中心を外した輪の上を何点か見て、最初に見つかった色を採る。
-     */
+    /** そのマスに置かれているビーズの色。空なら "empty"。 */
     const colorAt = (col: number, row: number): string => {
-      const cx = (col + 0.5) * BEAD_CELL_WIDTH;
-      const cy = (row + 0.5) * BEAD_CELL_HEIGHT;
-      const ring = Math.min(BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT) * 0.3;
-      const probes: [number, number][] = [
-        [cx + ring, cy],
-        [cx - ring, cy],
-        [cx, cy + ring],
-        [cx, cy - ring],
-      ];
-      for (const [px, py] of probes) {
+      for (const [px, py] of beadProbePoints(col, row)) {
         const ix = Math.min(CANVAS_WIDTH - 1, Math.max(0, Math.floor(px)));
         const iy = Math.min(CANVAS_HEIGHT - 1, Math.max(0, Math.floor(py)));
         const offset = (iy * CANVAS_WIDTH + ix) * 4;
@@ -619,6 +623,24 @@ export class Surface {
     this.ctx.globalCompositeOperation = "source-over";
     this.ctx.putImageData(image, 0, 0);
     return rect;
+  }
+
+  /**
+   * ビーズモードのスポイト。マスに置かれているビーズの色を返す。
+   * 何も置いていないマスなら null(＝色を変えない)。
+   * ここで中心の画素を読むと、穴(透明)を拾って紙の色を吸ってしまう。
+   */
+  pickCell(x: number, y: number): string | null {
+    const { col, row } = beadCellOf(x, y);
+    for (const [px, py] of beadProbePoints(col, row)) {
+      const ix = Math.min(CANVAS_WIDTH - 1, Math.max(0, Math.floor(px)));
+      const iy = Math.min(CANVAS_HEIGHT - 1, Math.max(0, Math.floor(py)));
+      const data = this.ctx.getImageData(ix, iy, 1, 1).data;
+      if ((data[3] ?? 0) < 8) continue;
+      const hex = (value: number): string => value.toString(16).padStart(2, "0");
+      return `#${hex(data[0] ?? 0)}${hex(data[1] ?? 0)}${hex(data[2] ?? 0)}`;
+    }
+    return null;
   }
 
   /** 「スポイト」。透明部分(消しゴム跡)は紙の色として扱う。 */

@@ -588,7 +588,10 @@ class App {
         this.gridPanel.close();
 
         if (this.activeTool === "picker") {
-          const picked = this.surface.pick(point.x, point.y);
+          // ビーズはマスの輪を見る。中心は穴(透明)なので紙の色を吸ってしまう。
+          const picked = this.snapToCells
+            ? this.surface.pickCell(point.x, point.y)
+            : this.surface.pick(point.x, point.y);
           if (picked !== null) {
             this.color = picked;
             this.syncSwatches();
