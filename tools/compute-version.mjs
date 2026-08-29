@@ -24,7 +24,12 @@ export function computeVersion() {
     if (!commitTsStr || !hash) throw new Error("git 出力が空でした");
     const commitTs = Number(commitTsStr);
     if (!Number.isFinite(commitTs)) throw new Error(`commit 時刻の解析に失敗: ${commitTsStr}`);
-    return formatVersion(commitTs, hash, status.trim().length > 0);
+    const dirty = status.trim().length > 0;
+    if (dirty) {
+      // 何が汚れているのかが分からないと調べようがないので、必ず内訳を出す。
+      console.warn("[compute-version] 作業ツリーに変更あり:\n" + status.trim());
+    }
+    return formatVersion(commitTs, hash, dirty);
   } catch (err) {
     console.warn(
       "[compute-version] git 情報を取得できなかったため版文字列を unknown にします:",
