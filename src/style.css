@@ -335,6 +335,8 @@ ruby > rt {
 
 .panel.is-open {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   animation: panel-in 0.24s var(--spring);
 }
 
@@ -371,6 +373,64 @@ ruby > rt {
 
 .swatch.is-active {
   box-shadow: 0 0 0 5px var(--accent);
+}
+
+/* ペン先(クレヨン / Ｇペン / 筆)。太さの段の上に置く。 */
+.pen-panel {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.nib-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.nib-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 84px;
+  height: 84px;
+  border: 3px solid transparent;
+  border-radius: 20px;
+  background: #f7f3ec;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.nib-button .icon {
+  display: block;
+  width: 34px;
+  height: 34px;
+}
+
+.nib-button .icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+.nib-button:active {
+  transform: scale(0.88);
+}
+
+.nib-button.is-active {
+  border-color: var(--accent);
+  background: #eaf4fc;
+}
+
+/* 太さの段。 */
+.size-row {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
 }
 
 .size-button {

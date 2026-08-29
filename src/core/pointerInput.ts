@@ -11,6 +11,13 @@
 export interface CanvasPoint {
   x: number;
   y: number;
+  /** イベント時刻(ms)。線の速さ = 太さの計算に使う。 */
+  time: number;
+  /**
+   * 筆圧(0..1)。スタイラスでのみ意味を持つ。
+   * マウス / 指は押下中つねに 0.5 を返すので、そのまま渡して brush.ts 側で判断させる。
+   */
+  pressure: number | undefined;
 }
 
 export interface GestureChange {
@@ -47,11 +54,15 @@ export function toCanvasPoint(
   rect: { left: number; top: number; width: number; height: number },
   canvasWidth: number,
   canvasHeight: number,
+  time = 0,
+  pressure: number | undefined = undefined,
 ): CanvasPoint {
-  if (rect.width === 0 || rect.height === 0) return { x: 0, y: 0 };
+  if (rect.width === 0 || rect.height === 0) return { x: 0, y: 0, time, pressure };
   return {
     x: ((clientX - rect.left) / rect.width) * canvasWidth,
     y: ((clientY - rect.top) / rect.height) * canvasHeight,
+    time,
+    pressure,
   };
 }
 
@@ -77,8 +88,23 @@ export function installPointerInput(canvas: HTMLCanvasElement, handlers: Pointer
   /** ジェスチャ後、全部の指が離れるまでは描き始めない(残った 1 本で線が出る事故を防ぐ)。 */
   let suppressDraw = false;
 
-  const pointOf = (event: { clientX: number; clientY: number }): CanvasPoint =>
-    toCanvasPoint(event.clientX, event.clientY, canvas.getBoundingClientRect(), canvas.width, canvas.height);
+  const pointOf = (event: {
+    clientX: number;
+    clientY: number;
+    timeStamp?: number;
+    pressure?: number;
+    pointerType?: string;
+  }): CanvasPoint =>
+    toCanvasPoint(
+      event.clientX,
+      event.clientY,
+      canvas.getBoundingClientRect(),
+      canvas.width,
+      canvas.height,
+      event.timeStamp ?? 0,
+      // 本物の筆圧はペンでしか取れない。指 / マウスの値は使わない。
+      event.pointerType === "pen" ? event.pressure : undefined,
+    );
 
   const centerOf = (a: TouchState, b: TouchState): TouchState => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
 

@@ -3,15 +3,28 @@
 import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./model.ts";
 import { floodFill, type Rgba } from "./floodFill.ts";
 import { DirtyRect, MAX_STEPS, trimPatches, type FillRect, type UndoPatch } from "./undoStack.ts";
+import { NIB_DEFS, strokeWidth, type NibDynamics } from "./brush.ts";
 
 export const PAPER_COLOR = "#fffdf7";
 
 export interface StrokeStyle {
   color: string;
-  /** キャンバス座標での太さ(px)。 */
+  /** キャンバス座標での基準の太さ(px)。ペン先によってはここから増減する。 */
   size: number;
   /** 消しゴムは紙の色で塗るのではなく合成モードで消す。 */
   erase: boolean;
+  /** ペン先の性質(速さ→太さ・入り抜き・手ブレ補正)。省略時はクレヨン(太さ一定)。 */
+  dynamics?: NibDynamics;
+}
+
+/** 描画待ちの点。入り抜きのために、線の末尾は少しだけ描かずに保持する。 */
+interface PendingPoint {
+  x: number;
+  y: number;
+  speed: number;
+  pressure: number | undefined;
+  /** 線の始点からの道のり(px)。 */
+  distance: number;
 }
 
 export class Surface {
@@ -30,9 +43,19 @@ export class Surface {
   /** 「戻る」で巻き戻した分。新しく描いたら捨てる(一般的なペイントと同じ作法)。 */
   private redoPatches: UndoPatch[] = [];
   private dirty: DirtyRect | null = null;
+  private strokeStyle: StrokeStyle | null = null;
+  private dynamics: NibDynamics = NIB_DEFS.crayon.dynamics;
+  /** 手ブレ補正後の現在位置。 */
+  private smoothX = 0;
+  private smoothY = 0;
+  private lastTime = 0;
+  /** 直前に実際に描いた点。 */
   private lastX = 0;
   private lastY = 0;
-  private strokeStyle: StrokeStyle | null = null;
+  private lastWidth = 0;
+  private travelled = 0;
+  private pending: PendingPoint[] = [];
+  private drewAnything = false;
 
   constructor(canvas: HTMLCanvasElement) {
     canvas.width = CANVAS_WIDTH;
@@ -68,23 +91,58 @@ export class Surface {
 
   // --- ストローク -------------------------------------------------------
 
-  beginStroke(x: number, y: number, style: StrokeStyle): void {
+  beginStroke(x: number, y: number, style: StrokeStyle, time = 0, pressure?: number): void {
     this.strokeStyle = style;
+    this.dynamics = style.dynamics ?? NIB_DEFS.crayon.dynamics;
     this.dirty = new DirtyRect();
+    this.smoothX = x;
+    this.smoothY = y;
+    this.lastTime = time;
     this.lastX = x;
     this.lastY = y;
-    this.dirty.add(x, y, style.size);
-    // 点タップでも必ず 1 点は落ちるようにする(子どもは「ちょん」と置く)。
-    this.paintSegment(x, y, x, y, style);
+    this.lastWidth = style.size;
+    this.travelled = 0;
+    this.drewAnything = false;
+    // 入り抜きのある先端は、描き終わりが分かるまで描けない。
+    // 末尾を少しだけ保持しておき、endStroke でまとめて細らせながら描く。
+    this.pending = [{ x, y, speed: 0, pressure, distance: 0 }];
+    this.dirty.add(x, y, style.size * this.dynamics.maxWidthRatio);
   }
 
-  extendStroke(x: number, y: number): void {
+  extendStroke(x: number, y: number, time = 0, pressure?: number): void {
     const style = this.strokeStyle;
     if (style === null || this.dirty === null) return;
-    this.paintSegment(this.lastX, this.lastY, x, y, style);
-    this.dirty.add(x, y, style.size);
-    this.lastX = x;
-    this.lastY = y;
+
+    // 手ブレ補正。指の細かい揺れを吸収する。数フレームぶん遅れるが、
+    // 線の見た目が落ち着く効果の方がはるかに大きい。
+    const alpha = 1 - this.dynamics.smoothing;
+    const prevX = this.smoothX;
+    const prevY = this.smoothY;
+    this.smoothX += (x - this.smoothX) * alpha;
+    this.smoothY += (y - this.smoothY) * alpha;
+
+    const step = Math.hypot(this.smoothX - prevX, this.smoothY - prevY);
+    if (step < 0.01) return;
+    // 端末やイベントの詰まりで dt が壊れても速さが暴れないよう範囲を絞る。
+    const dt = Math.min(100, Math.max(1, time - this.lastTime));
+    this.lastTime = time;
+    this.travelled += step;
+    this.pending.push({
+      x: this.smoothX,
+      y: this.smoothY,
+      speed: step / dt,
+      pressure,
+      distance: this.travelled,
+    });
+    this.dirty.add(this.smoothX, this.smoothY, style.size * this.dynamics.maxWidthRatio);
+
+    // 末尾(抜きに使う長さ)より古い点は、もう細らせる必要がないので確定して描く。
+    while (this.pending.length > 1) {
+      const head = this.pending[0] as PendingPoint;
+      if (this.travelled - head.distance <= this.dynamics.taperOutPx) break;
+      this.pending.shift();
+      this.renderPoint(head, Number.POSITIVE_INFINITY, style);
+    }
   }
 
   /**
@@ -95,6 +153,7 @@ export class Surface {
     const dirty = this.dirty;
     this.dirty = null;
     this.strokeStyle = null;
+    this.pending = [];
     if (dirty === null) return;
     const rect = dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
     if (rect === null) return;
@@ -110,32 +169,75 @@ export class Surface {
   /** ストロークを確定し、undo 用に変更前の画素を積む。戻り値は変更矩形。 */
   endStroke(): FillRect | null {
     const dirty = this.dirty;
+    const style = this.strokeStyle;
+    if (dirty !== null && style !== null) {
+      // 残しておいた末尾を、終端に近づくほど細くしながら描く。
+      for (const point of this.pending) {
+        this.renderPoint(point, this.travelled - point.distance, style);
+      }
+      // 「ちょん」と置いただけの点も必ず残す(子どもは点を打つ)。
+      if (!this.drewAnything) {
+        const width = Math.max(2, style.size * (style.dynamics === undefined ? 1 : 0.6));
+        this.paintDot(this.lastX, this.lastY, width, style);
+      }
+    }
+    this.pending = [];
     this.dirty = null;
     this.strokeStyle = null;
     if (dirty === null) return null;
-    const rect = dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
-    return rect;
+    return dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
   }
 
-  private paintSegment(x0: number, y0: number, x1: number, y1: number, style: StrokeStyle): void {
+  /** 1 点ぶんを、直前の点からの線として描く。 */
+  private renderPoint(point: PendingPoint, distanceFromEnd: number, style: StrokeStyle): void {
+    const width = strokeWidth(
+      style.size,
+      this.dynamics,
+      point.speed,
+      point.pressure,
+      point.distance,
+      distanceFromEnd,
+    );
+    if (point.x !== this.lastX || point.y !== this.lastY) {
+      // 太さは点ごとに変わるので、区間の平均で描く。区間が短いので段差は見えない。
+      this.paintLine(this.lastX, this.lastY, point.x, point.y, (this.lastWidth + width) / 2, style);
+      this.drewAnything = true;
+    }
+    this.lastX = point.x;
+    this.lastY = point.y;
+    this.lastWidth = width;
+  }
+
+  private paintLine(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    width: number,
+    style: StrokeStyle,
+  ): void {
     const ctx = this.ctx;
     ctx.save();
     ctx.globalCompositeOperation = style.erase ? "destination-out" : "source-over";
     ctx.strokeStyle = style.color;
-    ctx.fillStyle = style.color;
-    ctx.lineWidth = style.size;
+    ctx.lineWidth = Math.max(1, width);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    if (x0 === x1 && y0 === y1) {
-      ctx.beginPath();
-      ctx.arc(x0, y0, style.size / 2, 0, Math.PI * 2);
-      ctx.fill();
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.lineTo(x1, y1);
-      ctx.stroke();
-    }
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x1, y1);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  private paintDot(x: number, y: number, width: number, style: StrokeStyle): void {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = style.erase ? "destination-out" : "source-over";
+    ctx.fillStyle = style.color;
+    ctx.beginPath();
+    ctx.arc(x, y, Math.max(1, width) / 2, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 

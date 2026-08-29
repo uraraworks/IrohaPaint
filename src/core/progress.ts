@@ -5,6 +5,7 @@
 // リロードやタブを閉じた後も必ず残す。
 // 量が小さく同期的に読めればよいので localStorage で足りる(IndexedDB は要らない)。
 import { INITIAL_TOOLS, TOOL_DEFS, type ToolId } from "./tools.ts";
+import { isNibId, type NibId } from "./brush.ts";
 
 const KEY = "iroha-paint:progress";
 
@@ -15,6 +16,8 @@ export interface Progress {
   currentWorkId: string | null;
   /** 方眼マスを出しているか。下敷きの設定なので作品ではなく人に属する。 */
   grid: boolean;
+  /** 選んでいるペン先。 */
+  nib: NibId;
 }
 
 export function loadProgress(): Progress {
@@ -23,6 +26,7 @@ export function loadProgress(): Progress {
     strokeCount: 0,
     currentWorkId: null,
     grid: false,
+    nib: "crayon",
   };
   try {
     const raw = localStorage.getItem(KEY);
@@ -38,6 +42,7 @@ export function loadProgress(): Progress {
       strokeCount: typeof parsed.strokeCount === "number" && parsed.strokeCount >= 0 ? parsed.strokeCount : 0,
       currentWorkId: typeof parsed.currentWorkId === "string" ? parsed.currentWorkId : null,
       grid: parsed.grid === true,
+      nib: isNibId(parsed.nib) ? parsed.nib : "crayon",
     };
   } catch {
     // プライベートブラウズ等で localStorage が使えなくても描けることを優先する。

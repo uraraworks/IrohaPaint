@@ -8,6 +8,7 @@
 //   6. iPad(指)と PC(マウス)の両方で成立する
 import "./style.css";
 import { CRAYON_COLORS, ERASER_SIZES, PEN_SIZES } from "./core/palette.ts";
+import { NIB_DEFS, NIB_ORDER, type NibId } from "./core/brush.ts";
 import {
   appendSnapshot,
   createWork,
@@ -20,7 +21,7 @@ import { hexToRgba, Surface } from "./core/surface.ts";
 import { installPointerInput } from "./core/pointerInput.ts";
 import { clampView, IDENTITY, panBy, toCss, zoomAt, type ViewTransform } from "./core/viewport.ts";
 import { CHEST_ICON_SVG, INITIAL_TOOLS, nextUnlock, TOOL_DEFS, type ToolId, type Unlock } from "./core/tools.ts";
-import { labelText, renderLabel } from "./ui/label.ts";
+import { labelText, plainText, renderLabel, renderRuby } from "./ui/label.ts";
 import { SoundPlayer } from "./core/sound.ts";
 import { loadProgress, saveProgress } from "./core/progress.ts";
 import { GuideBubble } from "./ui/guide.ts";
@@ -55,6 +56,7 @@ class App {
   private penSize = PEN_SIZES[1] ?? 26;
   private eraserSize = ERASER_SIZES[1] ?? 70;
   private gridOn = false;
+  private nib: NibId = "crayon";
   private strokeCount = 0;
   private pendingUnlock: Unlock | null = null;
 
@@ -81,6 +83,7 @@ class App {
     this.strokeCount = progress.strokeCount;
     this.currentWorkId = progress.currentWorkId;
     this.gridOn = progress.grid;
+    this.nib = progress.nib;
 
     this.stage = document.createElement("div");
     this.stage.className = "stage";
@@ -156,6 +159,9 @@ class App {
       this.setActiveTool("pen");
       this.sound.play("poko");
     });
+    // 太さの上に「ペン先」の段を足す。
+    // クレヨン(太さ一定)が既定で、Ｇペン・筆は速さで太さが変わる = お手本を見せる用。
+    this.penPanel.element.prepend(this.createNibRow());
     this.eraserPanel = this.createSizePanel("eraser-panel", ERASER_SIZES, (size) => {
       this.eraserSize = size;
       this.setActiveTool("eraser");
@@ -163,6 +169,7 @@ class App {
     });
     this.syncSwatches();
     this.syncSizes();
+    this.syncNibs();
 
     // パネル外タップで閉じる。
     document.addEventListener("pointerdown", (event) => {
@@ -174,6 +181,40 @@ class App {
     });
   }
 
+  private createNibRow(): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "nib-row";
+    for (const id of NIB_ORDER) {
+      const def = NIB_DEFS[id];
+      const button = document.createElement("button");
+      button.className = "nib-button";
+      button.dataset.nib = id;
+      const icon = document.createElement("span");
+      icon.className = "icon";
+      icon.innerHTML = def.iconSvg;
+      const label = document.createElement("span");
+      label.className = "label";
+      label.appendChild(renderRuby(def.label));
+      button.append(icon, label);
+      button.setAttribute("aria-label", plainText(def.label));
+      button.addEventListener("click", () => {
+        this.nib = id;
+        this.setActiveTool("pen");
+        this.syncNibs();
+        this.persistProgress();
+        this.sound.play("poko");
+      });
+      row.appendChild(button);
+    }
+    return row;
+  }
+
+  private syncNibs(): void {
+    for (const element of this.penPanel.element.querySelectorAll<HTMLElement>(".nib-button")) {
+      element.classList.toggle("is-active", element.dataset.nib === this.nib);
+    }
+  }
+
   /** 太さを選ぶパネル。ふでと消しゴムで同じ形にする(操作を覚え直させない)。 */
   private createSizePanel(
     className: string,
@@ -181,6 +222,9 @@ class App {
     onPick: (size: number) => void,
   ): Panel {
     const panel = new Panel(document.body, className);
+    // 太さは 1 行に並べる(ペン先の段と積み重ねるため、行を箱に入れておく)。
+    const row = document.createElement("div");
+    row.className = "size-row";
     for (const size of sizes) {
       const button = document.createElement("button");
       button.className = "size-button";
@@ -198,8 +242,9 @@ class App {
         this.syncSizes();
         panel.close();
       });
-      panel.element.appendChild(button);
+      row.appendChild(button);
     }
+    panel.element.appendChild(row);
     return panel;
   }
 
@@ -430,15 +475,23 @@ class App {
         }
 
         this.drawing = true;
-        this.surface.beginStroke(point.x, point.y, {
-          color: this.color,
-          size: this.activeTool === "eraser" ? this.eraserSize : this.penSize,
-          erase: this.activeTool === "eraser",
-        });
+        this.surface.beginStroke(
+          point.x,
+          point.y,
+          {
+            color: this.color,
+            size: this.activeTool === "eraser" ? this.eraserSize : this.penSize,
+            erase: this.activeTool === "eraser",
+            // 消しゴムは太さ一定のまま(消す量が変わると狙って消せない)。
+            dynamics: this.activeTool === "eraser" ? undefined : NIB_DEFS[this.nib].dynamics,
+          },
+          point.time,
+          point.pressure,
+        );
       },
       onMove: (point) => {
         if (!this.drawing) return;
-        this.surface.extendStroke(point.x, point.y);
+        this.surface.extendStroke(point.x, point.y, point.time, point.pressure);
       },
       onGestureStart: () => {
         // ピンチに移った瞬間、描きかけの線を捨てる(写真アプリの感覚で触った子を裏切らない)。
@@ -543,6 +596,7 @@ class App {
       strokeCount: this.strokeCount,
       currentWorkId: this.work?.id ?? null,
       grid: this.gridOn,
+      nib: this.nib,
     });
   }
 
