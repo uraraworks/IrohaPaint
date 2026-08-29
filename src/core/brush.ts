@@ -10,7 +10,15 @@
 // ここは純粋な計算だけを置き、描画は surface.ts が行う(vitest で検証できるように)。
 import type { LabelPart } from "./tools.ts";
 
-export type NibId = "crayon" | "gpen" | "brush";
+export type NibId = "crayon" | "pencil" | "gpen" | "brush" | "oil";
+
+/**
+ * 線の質感。太さの計算とは別に、描き方そのものを変える。
+ *   smooth … 1 本の線を引く(クレヨン / Ｇペン / 筆)
+ *   pencil … 薄い粒をばらまく。重ねるほど濃くなる = 色鉛筆
+ *   oil    … 何本もの筋を並べて引く。絵の具を盛った筆跡 = 油絵
+ */
+export type NibTexture = "smooth" | "pencil" | "oil";
 
 export interface NibDynamics {
   /** いちばん速く動かしたときの太さ(基準太さに対する倍率)。 */
@@ -26,6 +34,8 @@ export interface NibDynamics {
   smoothing: number;
   /** 筆圧が取れるときに使うか。 */
   usePressure: boolean;
+  /** 線の質感。 */
+  texture: NibTexture;
 }
 
 export interface NibDef {
@@ -53,6 +63,29 @@ export const NIB_DEFS: Readonly<Record<NibId, NibDef>> = {
       taperOutPx: 0,
       smoothing: 0.2,
       usePressure: false,
+      texture: "smooth",
+    },
+  },
+  // 色鉛筆。薄い粒を落とすので、同じ場所を重ねるほど濃くなる。
+  // 太さはあまり変わらず、力の入れ方(速さ・筆圧)は濃さに出る。
+  pencil: {
+    id: "pencil",
+    label: [{ base: "色", ruby: "いろ" }, { base: "えんぴつ" }],
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true"><g transform="rotate(-20 16 16)">
+      <rect x="12" y="4" width="8" height="15" fill="#8cc152" stroke="#3d3730" stroke-width="2"/>
+      <path d="M12 19h8l-4 7z" fill="#f7e6c4" stroke="#3d3730" stroke-width="2"
+        stroke-linejoin="round"/>
+      <path d="M14.4 23.5h3.2L16 26z" fill="#3d3730"/>
+    </g></svg>`,
+    dynamics: {
+      minWidthRatio: 0.8,
+      maxWidthRatio: 1.1,
+      speedForMin: 2.4,
+      taperInPx: 0,
+      taperOutPx: 0,
+      smoothing: 0.3,
+      usePressure: true,
+      texture: "pencil",
     },
   },
   // マンガのGペン。速さで大きく太さが変わり、入り抜きが強い。
@@ -73,6 +106,7 @@ export const NIB_DEFS: Readonly<Record<NibId, NibDef>> = {
       taperOutPx: 60,
       smoothing: 0.38,
       usePressure: true,
+      texture: "smooth",
     },
   },
   // 筆。ゆっくり動かすとぐっと太る。抜きは短く、線幅の幅が広い。
@@ -93,11 +127,35 @@ export const NIB_DEFS: Readonly<Record<NibId, NibDef>> = {
       taperOutPx: 40,
       smoothing: 0.42,
       usePressure: true,
+      texture: "smooth",
+    },
+  },
+  // 油絵。太くて不透明、筆の毛の筋が残る。塗り重ねると盛り上がって見える。
+  oil: {
+    id: "oil",
+    label: [{ base: "油絵", ruby: "あぶらえ" }],
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M5 24c7-4 12-10 17-18" fill="none" stroke="#e2544a" stroke-width="7"
+        stroke-linecap="round"/>
+      <path d="M6 26c7-4 12-10 17-18" fill="none" stroke="#f3c64b" stroke-width="3"
+        stroke-linecap="round"/>
+      <path d="M8 27.5c7-4 12-10 17-18" fill="none" stroke="#4aa3df" stroke-width="2"
+        stroke-linecap="round"/>
+    </svg>`,
+    dynamics: {
+      minWidthRatio: 0.9,
+      maxWidthRatio: 1.5,
+      speedForMin: 2.0,
+      taperInPx: 0,
+      taperOutPx: 0,
+      smoothing: 0.35,
+      usePressure: true,
+      texture: "oil",
     },
   },
 };
 
-export const NIB_ORDER: readonly NibId[] = ["crayon", "gpen", "brush"];
+export const NIB_ORDER: readonly NibId[] = ["crayon", "pencil", "gpen", "brush", "oil"];
 
 export function isNibId(value: unknown): value is NibId {
   return typeof value === "string" && value in NIB_DEFS;
@@ -147,4 +205,18 @@ export function strokeWidth(
     taperRatio(distanceFromEnd, dynamics.taperOutPx);
   // 細くなりすぎて消えないよう下限を置く。
   return Math.max(1, baseWidth * ratio);
+}
+
+/**
+ * 色を少し明るく / 暗くする。油絵の筆跡(毛ごとの濃淡)を作るのに使う。
+ * amount は -1..1。0 で元の色。
+ */
+export function shiftColor(hex: string, amount: number): string {
+  const channel = (index: number): number => {
+    const value = Number.parseInt(hex.slice(1 + index * 2, 3 + index * 2), 16);
+    const shifted = amount >= 0 ? value + (255 - value) * amount : value * (1 + amount);
+    return Math.round(Math.min(255, Math.max(0, shifted)));
+  };
+  const hexOf = (value: number): string => value.toString(16).padStart(2, "0");
+  return `#${hexOf(channel(0))}${hexOf(channel(1))}${hexOf(channel(2))}`;
 }

@@ -3,7 +3,7 @@
 import { BEAD_COLS, BEAD_ROWS, CANVAS_HEIGHT, CANVAS_WIDTH } from "./model.ts";
 import { floodFill, type Rgba } from "./floodFill.ts";
 import { DirtyRect, MAX_STEPS, trimPatches, type FillRect, type UndoPatch } from "./undoStack.ts";
-import { NIB_DEFS, strokeWidth, type NibDynamics } from "./brush.ts";
+import { NIB_DEFS, shiftColor, strokeWidth, type NibDynamics } from "./brush.ts";
 
 export const PAPER_COLOR = "#fffdf7";
 
@@ -70,8 +70,22 @@ interface StrokeState {
   drewAnything: boolean;
   /** ビーズモードで、この 1 ストロークに既に置いたマス(同じマスを塗り直さない)。 */
   placedCells: Set<number>;
+  /**
+   * 油絵の「筆の毛」。1 本ごとの位置と濃さを **ストロークの最初に決めて固定する**。
+   * 区間ごとに乱数を振り直すと筋が繋がらず、格子状の模様になってしまう。
+   */
+  bristles: Bristle[];
   /** 仮インクを描いた範囲(消すときに使う)。 */
   overlayDirty: FillRect | null;
+}
+
+/** 油絵の筆の毛 1 本。 */
+interface Bristle {
+  /** 線の中心からの位置(-1..1)。 */
+  offset: number;
+  /** 色の明暗(-1..1)。 */
+  shade: number;
+  alpha: number;
 }
 
 /** 描画待ちの点。入り抜きのために、線の末尾は少しだけ描かずに保持する。 */
@@ -182,6 +196,7 @@ export class Surface {
       drewAnything: false,
       overlayDirty: null,
       placedCells: new Set<number>(),
+      bristles: dynamics.texture === "oil" ? createBristles() : [],
       // 入り抜きのある先端は、描き終わりが分かるまで描けない。
       // 末尾を少しだけ保持しておき、endStroke でまとめて細らせながら描く。
       pending: [{ x, y, speed: 0, pressure, distance: 0 }],
@@ -496,6 +511,8 @@ export class Surface {
         point.y,
         (stroke.lastWidth + width) / 2,
         stroke.style,
+        stroke.dynamics,
+        stroke.bristles,
       );
       stroke.drewAnything = true;
     }
@@ -511,7 +528,18 @@ export class Surface {
     y1: number,
     width: number,
     style: StrokeStyle,
+    dynamics?: NibDynamics,
+    bristles: readonly Bristle[] = [],
   ): void {
+    const texture = style.erase ? "smooth" : (dynamics?.texture ?? "smooth");
+    if (texture === "pencil") {
+      this.paintPencil(x0, y0, x1, y1, width, style);
+      return;
+    }
+    if (texture === "oil") {
+      this.paintOil(x0, y0, x1, y1, width, style, bristles);
+      return;
+    }
     const ctx = this.ctx;
     ctx.save();
     ctx.globalCompositeOperation = style.erase ? "destination-out" : "source-over";
@@ -523,6 +551,82 @@ export class Surface {
     ctx.moveTo(x0, y0);
     ctx.lineTo(x1, y1);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * 色鉛筆。薄い粒をばらまく。
+   * 1 回で塗り切らないので、同じ場所を重ねるほど濃くなる = 本物と同じ手応えになる。
+   * 紙の目に見せるため、粒は線の直交方向にばらつかせる。
+   */
+  private paintPencil(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    width: number,
+    style: StrokeStyle,
+  ): void {
+    const length = Math.hypot(x1 - x0, y1 - y0);
+    const steps = Math.max(1, Math.round(length / 1.6));
+    const nx = length === 0 ? 0 : -(y1 - y0) / length;
+    const ny = length === 0 ? 0 : (x1 - x0) / length;
+    const half = Math.max(1, width) / 2;
+
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = style.color;
+    ctx.globalAlpha = 0.16;
+    for (let i = 0; i <= steps; i += 1) {
+      const t = i / steps;
+      const px = x0 + (x1 - x0) * t;
+      const py = y0 + (y1 - y0) * t;
+      // 1 区間につき数粒。中心ほど密に落ちるよう、ばらつきに乱数を 2 回掛ける。
+      for (let k = 0; k < 3; k += 1) {
+        const spread = (Math.random() * 2 - 1) * (Math.random() * 0.5 + 0.5) * half;
+        const radius = half * (0.18 + Math.random() * 0.22);
+        ctx.beginPath();
+        ctx.arc(px + nx * spread, py + ny * spread, radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 油絵。何本もの筋を並べて引く。
+   * 筆の毛ごとに色を少し明るく / 暗くして、絵の具を盛った筆跡に見せる。
+   */
+  private paintOil(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    width: number,
+    style: StrokeStyle,
+    bristles: readonly Bristle[],
+  ): void {
+    const length = Math.hypot(x1 - x0, y1 - y0);
+    const nx = length === 0 ? 0 : -(y1 - y0) / length;
+    const ny = length === 0 ? 0 : (x1 - x0) / length;
+    const half = Math.max(1, width) / 2;
+
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(1.5, (half * 2) / bristles.length) * 1.35;
+    for (const bristle of bristles) {
+      const offset = bristle.offset * half;
+      ctx.strokeStyle = shiftColor(style.color, bristle.shade);
+      ctx.globalAlpha = bristle.alpha;
+      ctx.beginPath();
+      ctx.moveTo(x0 + nx * offset, y0 + ny * offset);
+      ctx.lineTo(x1 + nx * offset, y1 + ny * offset);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
@@ -721,6 +825,22 @@ export class Surface {
     this.strokes.clear();
     this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
   }
+}
+
+/**
+ * 油絵の毛並みを 1 本のストロークぶん作る。
+ * 位置は均等に並べたうえで少しだけ揺らし、端の毛ほど暗く薄くする
+ * (絵の具が盛り上がった縁に見える)。
+ */
+function createBristles(count = 7): Bristle[] {
+  return Array.from({ length: count }, (_, i) => {
+    const base = (i / (count - 1)) * 2 - 1;
+    return {
+      offset: base + (Math.random() - 0.5) * 0.18,
+      shade: (Math.random() - 0.5) * 0.4 - base * 0.2,
+      alpha: 0.82 + Math.random() * 0.18,
+    };
+  });
 }
 
 /** "#rrggbb" を塗りつぶし用の RGBA へ。 */

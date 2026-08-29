@@ -4,6 +4,7 @@ import {
   pressureRatio,
   strokeWidth,
   taperRatio,
+  shiftColor,
   widthRatioForSpeed,
 } from "../src/core/brush.ts";
 import { nearestBeadColor } from "../src/core/palette.ts";
@@ -89,5 +90,34 @@ describe("nearestBeadColor", () => {
     expect(nearestBeadColor("#e2544a")).toBe("#e4322b");
     // 紙の色に近いごく薄い色 → しろ
     expect(nearestBeadColor("#fffdf7")).toBe("#ffffff");
+  });
+});
+
+describe("shiftColor", () => {
+  it("0 なら色は変わらない", () => {
+    expect(shiftColor("#4aa3df", 0)).toBe("#4aa3df");
+  });
+
+  it("正で明るく、負で暗くなる", () => {
+    expect(shiftColor("#808080", 0.5)).toBe("#c0c0c0");
+    expect(shiftColor("#808080", -0.5)).toBe("#404040");
+  });
+
+  it("振り切っても 0..255 を外れない", () => {
+    expect(shiftColor("#ffffff", 1)).toBe("#ffffff");
+    expect(shiftColor("#000000", -1)).toBe("#000000");
+  });
+});
+
+describe("ペン先の質感", () => {
+  it("色鉛筆は粒、油絵は筋、他は 1 本線", () => {
+    expect(NIB_DEFS.pencil.dynamics.texture).toBe("pencil");
+    expect(NIB_DEFS.oil.dynamics.texture).toBe("oil");
+    expect(NIB_DEFS.crayon.dynamics.texture).toBe("smooth");
+  });
+
+  it("色鉛筆と油絵は入り抜きを持たない(重ねて描く道具なので)", () => {
+    expect(NIB_DEFS.pencil.dynamics.taperOutPx).toBe(0);
+    expect(NIB_DEFS.oil.dynamics.taperOutPx).toBe(0);
   });
 });
