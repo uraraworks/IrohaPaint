@@ -1,0 +1,341 @@
+/* 方針(プロト仕様書§6): 「かわいい」ではなく「気持ちいい」。
+   角丸・太線・でかいボタン・ニュートラルな基調色。装飾は足さない。 */
+
+:root {
+  --paper: #fffdf7;
+  --bg: #f4efe6;
+  --bar: #ffffff;
+  --ink: #3d3730;
+  --line: #ddd3c4;
+  --accent: #4aa3df;
+  --shadow: 0 4px 0 rgba(0, 0, 0, 0.12);
+  /* ボタンは大人向けの 2 倍目安。最小 64px、実際は 88px 角。 */
+  --btn: 88px;
+  /* 「ぽよん」の実体。跳ね返りのあるイージング。 */
+  --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+  /* 長押しの選択・拡大鏡・ハイライトを止める */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+.app {
+  display: flex;
+  height: 100%;
+  /* OS のジェスチャ帯(ホームインジケータ / ナビバー)を避ける。
+     下バーの誤爆で最も効く一手。 */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+/* ツールバーの位置。既定は下。学童検証で誤タッチが出たら bar-left へ倒す。 */
+.app.bar-bottom {
+  flex-direction: column;
+}
+.app.bar-left {
+  flex-direction: row-reverse;
+}
+
+/* --- キャンバス --- */
+
+.stage {
+  position: relative;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  min-width: 0;
+  padding: 10px;
+}
+
+.paper {
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 1748 / 1181;
+  background: var(--paper);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  /* ブラウザ側のスクロール・ピンチを止めて描画に専念させる(ピンチは自前で処理する) */
+  touch-action: none;
+  /* viewport.ts の変換式は原点を左上に置く前提 */
+  transform-origin: 0 0;
+  cursor: crosshair;
+}
+
+.confetti {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.sound-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 56px;
+  height: 56px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow);
+  font-size: 24px;
+  cursor: pointer;
+}
+
+/* --- ツールバー --- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bar);
+  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.bar-left .toolbar {
+  flex-direction: column;
+  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.08);
+  overflow-y: auto;
+}
+
+.tool-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: var(--btn);
+  height: var(--btn);
+  flex: none;
+  border: 3px solid transparent;
+  border-radius: 20px;
+  background: #f7f3ec;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring), background 0.15s ease, border-color 0.15s ease;
+}
+
+.tool-button .icon {
+  font-size: 30px;
+  line-height: 1;
+}
+
+/* 漢字＋総ルビ(企画書§4.2 の L2)。ふりがなは本文の半分程度に。 */
+.tool-button .label {
+  display: block;
+  text-align: center;
+}
+
+ruby > rt {
+  font-size: 0.5em;
+  font-weight: 700;
+  /* ルビが詰まって潰れないよう少しだけ浮かせる */
+  transform: translateY(2px);
+}
+
+/* L3(一般ソフト用語・ふりがなオフ)ではルビだけ消す。Phase 1 で切替 UI を付ける。 */
+.app[data-notation="L3"] ruby > rt {
+  display: none;
+}
+
+/* 「ぽよん」: 押している間だけ縮む */
+.tool-button:active {
+  transform: scale(0.88);
+}
+
+.tool-button.is-active {
+  border-color: var(--accent);
+  background: #eaf4fc;
+}
+
+/* 現れた瞬間だけ跳ねる(宝箱で増えた道具) */
+.tool-button.is-new {
+  animation: pop-in 0.45s var(--spring);
+}
+
+@keyframes pop-in {
+  from {
+    transform: scale(0);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.tool-button.chest {
+  background: #fff2cc;
+  animation: chest-wiggle 1.2s ease-in-out infinite;
+}
+
+@keyframes chest-wiggle {
+  0%,
+  100% {
+    transform: rotate(-3deg);
+  }
+  50% {
+    transform: rotate(3deg);
+  }
+}
+
+.tool-button.done {
+  width: auto;
+  padding: 0 22px;
+  background: #ffe0b2;
+  margin-left: auto;
+}
+.bar-left .tool-button.done {
+  margin-left: 0;
+  margin-top: auto;
+  width: var(--btn);
+  padding: 0;
+  font-size: 13px;
+}
+
+/* --- パネル(ぽよんと開く) --- */
+
+.panel {
+  position: fixed;
+  z-index: 20;
+  display: none;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 22px;
+  background: var(--bar);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.2);
+  transform-origin: bottom center;
+}
+
+.panel.is-open {
+  display: flex;
+  animation: panel-in 0.24s var(--spring);
+}
+
+@keyframes panel-in {
+  from {
+    transform: scale(0.6) translateY(14px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+.swatches {
+  display: grid;
+  grid-template-columns: repeat(6, 68px);
+  gap: 12px;
+}
+
+.swatch {
+  width: 68px;
+  height: 68px;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--line);
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.swatch:active {
+  transform: scale(0.85);
+}
+
+.swatch.is-active {
+  box-shadow: 0 0 0 5px var(--accent);
+}
+
+.size-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 84px;
+  height: 84px;
+  border: 3px solid transparent;
+  border-radius: 20px;
+  background: #f7f3ec;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.size-button:active {
+  transform: scale(0.88);
+}
+
+.size-button.is-active {
+  border-color: var(--accent);
+}
+
+.size-dot {
+  background: var(--ink);
+  border-radius: 50%;
+}
+
+/* --- 吹き出し --- */
+
+.guide-bubble {
+  position: fixed;
+  z-index: 30;
+  display: none;
+  transform: translate(-50%, calc(-100% - 16px));
+  padding: 12px 18px;
+  border-radius: 18px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.guide-bubble.is-visible {
+  display: block;
+  animation: panel-in 0.3s var(--spring);
+}
+
+.guide-bubble::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -8px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  background: var(--ink);
+  transform: rotate(45deg);
+  border-radius: 3px;
+}
+
+/* 画面が狭い端末ではボタンを少しだけ小さくする(ただし 64px は下回らない) */
+@media (max-height: 560px), (max-width: 560px) {
+  :root {
+    --btn: 68px;
+  }
+  .tool-button {
+    font-size: 13px;
+  }
+  .tool-button .icon {
+    font-size: 24px;
+  }
+}
