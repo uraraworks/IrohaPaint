@@ -5,7 +5,7 @@
 //   宝箱     … 描いた量に応じて 2 回。解放は「描く行為の自然な副産物」に限る。
 // Phase 1 の「道具カタログ」はこの表をそのままカタログ項目に流用できる形にしておく。
 
-export type ToolId = "pen" | "color" | "eraser" | "undo" | "redo" | "done" | "picker" | "fill";
+export type ToolId = "pen" | "color" | "eraser" | "undo" | "redo" | "works" | "done" | "picker" | "fill";
 
 /**
  * ラベルの 1 かたまり。ruby があれば漢字にふりがなを振る。
@@ -93,6 +93,19 @@ export const TOOL_DEFS: Readonly<Record<ToolId, ToolDef>> = {
     </svg>`,
     description: "もどしたのを もとに もどせるよ",
   },
+  // 作品カタログ。「とっておいた絵」をメニューのように並べて選ぶ。
+  works: {
+    id: "works",
+    label: [{ base: "作品", ruby: "さくひん" }],
+    icon: "🖼️",
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="4" y="7" width="16" height="14" rx="2" fill="#fffdf7" stroke="#3d3730" stroke-width="2"/>
+      <rect x="9" y="11" width="16" height="14" rx="2" fill="#8cc152" stroke="#3d3730" stroke-width="2"/>
+      <path d="M11 22l4-5 3 3 2-2 3 4z" fill="#fffdf7" stroke="#3d3730" stroke-width="2"
+        stroke-linejoin="round"/>
+    </svg>`,
+    description: "とっておいた えを みられるよ",
+  },
   done: {
     id: "done",
     label: [{ base: "完成", ruby: "かんせい" }, { base: "！" }],
@@ -141,7 +154,7 @@ export const CHEST_ICON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
 </svg>`;
 
 /** 起動直後にツールバーにあるもの。 */
-export const INITIAL_TOOLS: readonly ToolId[] = ["pen", "color", "eraser", "undo", "redo", "done"];
+export const INITIAL_TOOLS: readonly ToolId[] = ["pen", "color", "eraser", "undo", "redo", "works", "done"];
 
 export interface Unlock {
   tool: ToolId;

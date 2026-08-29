@@ -11,10 +11,12 @@ const KEY = "sodatsu-paint:progress";
 export interface Progress {
   ownedTools: ToolId[];
   strokeCount: number;
+  /** いま開いている作品。次に起動したときも同じ絵の続きから描けるようにする。 */
+  currentWorkId: string | null;
 }
 
 export function loadProgress(): Progress {
-  const fallback: Progress = { ownedTools: [...INITIAL_TOOLS], strokeCount: 0 };
+  const fallback: Progress = { ownedTools: [...INITIAL_TOOLS], strokeCount: 0, currentWorkId: null };
   try {
     const raw = localStorage.getItem(KEY);
     if (raw === null) return fallback;
@@ -27,6 +29,7 @@ export function loadProgress(): Progress {
     return {
       ownedTools: owned,
       strokeCount: typeof parsed.strokeCount === "number" && parsed.strokeCount >= 0 ? parsed.strokeCount : 0,
+      currentWorkId: typeof parsed.currentWorkId === "string" ? parsed.currentWorkId : null,
     };
   } catch {
     // プライベートブラウズ等で localStorage が使えなくても描けることを優先する。

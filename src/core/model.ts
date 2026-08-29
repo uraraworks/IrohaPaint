@@ -41,6 +41,13 @@ export interface WorkRecord {
   deleted: boolean;
   /** 現在の中身。Phase 0 は常に 1 ページ。 */
   pages: PageData[];
+  /**
+   * 一覧表示用の小さい PNG。
+   * 一覧で原寸(1748x1181)を並べると読み込みだけで数十 MB 動くので、
+   * 保存のたびにサムネイルも一緒に作って持っておく。
+   * 古い保存データには無いので任意フィールド(無ければ原寸で代用する)。
+   */
+  thumbnail?: Blob;
   /** 履歴。古い順。追記のみ。 */
   snapshots: WorkSnapshot[];
 }
@@ -57,13 +64,14 @@ export function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${idCounter.toString(36)}-${rand}`;
 }
 
-export function createWork(image: Blob, now: number): WorkRecord {
+export function createWork(image: Blob, now: number, thumbnail?: Blob): WorkRecord {
   return {
     id: createId("work"),
     createdAt: now,
     updatedAt: now,
     markId: null,
     deleted: false,
+    ...(thumbnail === undefined ? {} : { thumbnail }),
     pages: [{ id: createId("page"), image }],
     snapshots: [],
   };

@@ -326,6 +326,166 @@ ruby > rt {
   border-radius: 50%;
 }
 
+/* --- 作品カタログ ---
+   ファミレスのメニュー方式: 写真が主役・文字は一言・カードは全部同じ形。
+   文字を読まなくても絵で選べることを最優先にする。
+   Phase 1 の「道具カタログ」も同じ骨格を使う。 */
+
+.gallery {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: none;
+  flex-direction: column;
+  background: var(--bg);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+.gallery.is-open {
+  display: flex;
+  animation: panel-in 0.26s var(--spring);
+}
+
+.gallery-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--bar);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+
+.gallery-title {
+  flex: 1;
+  margin: 0;
+  font-size: 26px;
+}
+
+.gallery-tab,
+.gallery-close {
+  min-height: 56px;
+  padding: 0 20px;
+  border: 3px solid transparent;
+  border-radius: 18px;
+  background: #f7f3ec;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.gallery-close {
+  background: #ffe0b2;
+}
+
+.gallery-tab:active,
+.gallery-close:active {
+  transform: scale(0.9);
+}
+
+.gallery-grid {
+  flex: 1;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 18px;
+  padding: 18px;
+  align-content: start;
+}
+
+.gallery-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  padding: 10px;
+  border: 4px solid transparent;
+  border-radius: 20px;
+  background: var(--bar);
+  box-shadow: var(--shadow);
+}
+
+.gallery-card.is-current {
+  border-color: var(--accent);
+}
+
+.gallery-thumb {
+  padding: 0;
+  border: none;
+  border-radius: 14px;
+  background: var(--paper);
+  aspect-ratio: 1748 / 1181;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.gallery-thumb:active {
+  transform: scale(0.94);
+}
+
+.gallery-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.gallery-caption {
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.gallery-action {
+  min-height: 52px;
+  border: none;
+  border-radius: 14px;
+  background: #f7f3ec;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.gallery-action:active {
+  transform: scale(0.92);
+}
+
+/* 「あたらしく かく」は白紙そのものに見せる(何が起きるか絵で分かる)。 */
+.gallery-new {
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 200px;
+  border: 4px dashed var(--line);
+  background: var(--paper);
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.gallery-new:active {
+  transform: scale(0.94);
+}
+
+.gallery-plus {
+  font-size: 56px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.gallery-empty {
+  grid-column: 1 / -1;
+  padding: 40px 0;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  opacity: 0.6;
+}
+
 /* --- 吹き出し --- */
 
 .guide-bubble {

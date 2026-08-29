@@ -234,6 +234,35 @@ export class Surface {
     });
   }
 
+  /**
+   * 一覧用の小さい PNG。原寸を並べると読み込みだけで重くなるので必ずこちらを使う。
+   */
+  async toThumbnail(maxWidth = 360): Promise<Blob> {
+    const scale = maxWidth / CANVAS_WIDTH;
+    const small = document.createElement("canvas");
+    small.width = Math.round(CANVAS_WIDTH * scale);
+    small.height = Math.round(CANVAS_HEIGHT * scale);
+    const ctx = small.getContext("2d");
+    if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
+    ctx.fillStyle = PAPER_COLOR;
+    ctx.fillRect(0, 0, small.width, small.height);
+    ctx.drawImage(this.canvas, 0, 0, small.width, small.height);
+    return await new Promise<Blob>((resolve, reject) => {
+      small.toBlob((blob) => {
+        if (blob === null) reject(new Error("PNG の生成に失敗しました"));
+        else resolve(blob);
+      }, "image/png");
+    });
+  }
+
+  /** まっさらな紙に戻す(あたらしく描く)。履歴も捨てる。 */
+  reset(): void {
+    this.clearToPaper();
+    this.patches = [];
+    this.redoPatches = [];
+    this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+  }
+
   /** 保存済み PNG を描き戻す(リロード復元)。 */
   async restoreFrom(image: Blob): Promise<void> {
     const bitmap = await createImageBitmap(image);

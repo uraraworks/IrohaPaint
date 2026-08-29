@@ -13,7 +13,14 @@ export interface WorkStore {
   put(work: WorkRecord): Promise<void>;
   /** 削除フラグの立っていない作品を updatedAt の新しい順で返す。 */
   list(): Promise<WorkRecord[]>;
+  /** ゴミばこの中身(削除フラグが立っているもの)。 */
+  listDeleted(): Promise<WorkRecord[]>;
   get(id: string): Promise<WorkRecord | null>;
+  /**
+   * 「すてる」/「とりもどす」。レコードは決して消さない(仕様書§7.5 消えない設計)。
+   * 見つからなければ false。
+   */
+  setDeleted(id: string, deleted: boolean): Promise<boolean>;
 }
 
 /** テスト用。IndexedDbWorkStore と同じ振る舞いを満たす。 */
@@ -30,8 +37,21 @@ export class MemoryWorkStore implements WorkStore {
       .sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
+  async listDeleted(): Promise<WorkRecord[]> {
+    return [...this.records.values()]
+      .filter((work) => work.deleted)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
   async get(id: string): Promise<WorkRecord | null> {
     return this.records.get(id) ?? null;
+  }
+
+  async setDeleted(id: string, deleted: boolean): Promise<boolean> {
+    const work = this.records.get(id);
+    if (work === undefined) return false;
+    this.records.set(id, { ...work, deleted });
+    return true;
   }
 }
 
@@ -84,17 +104,32 @@ export class IndexedDbWorkStore implements WorkStore {
   }
 
   async list(): Promise<WorkRecord[]> {
+    return await this.query((work) => !work.deleted);
+  }
+
+  async listDeleted(): Promise<WorkRecord[]> {
+    return await this.query((work) => work.deleted);
+  }
+
+  private async query(keep: (work: WorkRecord) => boolean): Promise<WorkRecord[]> {
     const db = await openDb();
     try {
       const tx = db.transaction(STORE_NAME, "readonly");
       const rows = await promisify(tx.objectStore(STORE_NAME).getAll());
       return rows
         .map(unwrap)
-        .filter((work): work is WorkRecord => work !== null && !work.deleted)
+        .filter((work): work is WorkRecord => work !== null && keep(work))
         .sort((a, b) => b.updatedAt - a.updatedAt);
     } finally {
       db.close();
     }
+  }
+
+  async setDeleted(id: string, deleted: boolean): Promise<boolean> {
+    const work = await this.get(id);
+    if (work === null) return false;
+    await this.put({ ...work, deleted });
+    return true;
   }
 
   async get(id: string): Promise<WorkRecord | null> {

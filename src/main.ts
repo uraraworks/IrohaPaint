@@ -20,6 +20,7 @@ import { loadProgress, saveProgress } from "./core/progress.ts";
 import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
+import { Gallery } from "./ui/gallery.ts";
 import { SOUND_OFF_SVG, SOUND_ON_SVG } from "./ui/icons.ts";
 
 /** 描き終わってから保存するまでの待ち時間。描画中に保存すると重い。 */
@@ -48,6 +49,8 @@ class App {
   private pendingUnlock: Unlock | null = null;
 
   private work: WorkRecord | null = null;
+  /** 起動時に復元する作品 ID(復元後は this.work が正)。 */
+  private currentWorkId: string | null = null;
   private saveTimer: number | null = null;
   private lastSnapshotAt = 0;
   private drawing = false;
@@ -56,6 +59,7 @@ class App {
 
   private colorPanel!: Panel;
   private penPanel!: Panel;
+  private gallery!: Gallery;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -64,6 +68,7 @@ class App {
     const progress = loadProgress();
     this.ownedTools = progress.ownedTools;
     this.strokeCount = progress.strokeCount;
+    this.currentWorkId = progress.currentWorkId;
 
     this.stage = document.createElement("div");
     this.stage.className = "stage";
@@ -79,6 +84,7 @@ class App {
     this.guide = new GuideBubble(document.body);
 
     this.buildPanels();
+    this.buildGallery();
     this.renderToolbar();
     this.buildSoundToggle();
     this.installInput(canvas);
@@ -162,6 +168,16 @@ class App {
 
   private isToolbarNode(node: Node): boolean {
     return this.toolbar.contains(node);
+  }
+
+  private buildGallery(): void {
+    this.gallery = new Gallery(document.body, {
+      onOpen: (id) => void this.openWork(id),
+      onCreate: () => void this.createWork(),
+      onTrash: (id) => void this.trashWork(id),
+      onRestore: (id) => void this.restoreWork(id),
+    });
+    this.gallery.onTabChange(() => void this.refreshGallery());
   }
 
   private buildSoundToggle(): void {
@@ -276,6 +292,9 @@ class App {
           this.sound.play("poko");
           this.afterHistoryChange();
         }
+        break;
+      case "works":
+        void this.openGallery();
         break;
       case "done":
         void this.exportPng();
@@ -454,7 +473,11 @@ class App {
   }
 
   private persistProgress(): void {
-    saveProgress({ ownedTools: this.ownedTools, strokeCount: this.strokeCount });
+    saveProgress({
+      ownedTools: this.ownedTools,
+      strokeCount: this.strokeCount,
+      currentWorkId: this.work?.id ?? null,
+    });
   }
 
   private openChest(unlock: Unlock): void {
@@ -470,6 +493,83 @@ class App {
     }
   }
 
+  // --- 作品カタログ -----------------------------------------------------
+
+  private async openGallery(): Promise<void> {
+    // 開く前に今の絵を確定させる。一覧に「さっきまで描いていた絵」が出ないと混乱する。
+    await this.save();
+    await this.refreshGallery();
+    this.gallery.open();
+  }
+
+  private async refreshGallery(): Promise<void> {
+    const works =
+      this.gallery.currentTab === "works" ? await this.store.list() : await this.store.listDeleted();
+    this.gallery.render(works, this.work?.id ?? null, Date.now());
+  }
+
+  private async openWork(id: string): Promise<void> {
+    if (id === this.work?.id) {
+      this.gallery.close();
+      return;
+    }
+    await this.save();
+    const work = await this.store.get(id);
+    const image = work?.pages[0]?.image;
+    if (work === null || work === undefined || image === undefined) return;
+    await this.surface.restoreFrom(image);
+    this.work = work;
+    this.lastSnapshotAt = work.updatedAt;
+    this.persistProgress();
+    this.syncHistoryButtons();
+    this.sound.play("poko");
+    this.gallery.close();
+  }
+
+  private async createWork(): Promise<void> {
+    await this.save();
+    this.surface.reset();
+    // 空の作品をこの場で作って開いた状態にする。
+    // 「あたらしく かく」を押した時点で一覧に 1 枚増えていないと、描く前に閉じた子の絵が迷子になる。
+    this.work = createWork(await this.surface.toPng(), Date.now(), await this.surface.toThumbnail());
+    await this.store.put(this.work);
+    this.lastSnapshotAt = this.work.updatedAt;
+    this.persistProgress();
+    this.syncHistoryButtons();
+    this.sound.play("poko");
+    this.gallery.close();
+  }
+
+  /** 「すてる」= ゴミばこ行き。レコードは消さない(仕様書§7.5)。 */
+  private async trashWork(id: string): Promise<void> {
+    await this.store.setDeleted(id, true);
+    this.sound.play("shu");
+    if (id === this.work?.id) {
+      // 今ひらいている絵を捨てたら、残っているいちばん新しい絵へ移る。
+      // 1 枚も無ければ白紙を用意する(描く場所が無い状態を作らない)。
+      const rest = await this.store.list();
+      const next = rest[0];
+      if (next === undefined) {
+        this.surface.reset();
+        this.work = createWork(await this.surface.toPng(), Date.now(), await this.surface.toThumbnail());
+        await this.store.put(this.work);
+      } else {
+        const image = next.pages[0]?.image;
+        if (image !== undefined) await this.surface.restoreFrom(image);
+        this.work = next;
+      }
+      this.persistProgress();
+      this.syncHistoryButtons();
+    }
+    await this.refreshGallery();
+  }
+
+  private async restoreWork(id: string): Promise<void> {
+    await this.store.setDeleted(id, false);
+    this.sound.play("poko");
+    await this.refreshGallery();
+  }
+
   // --- 保存 -------------------------------------------------------------
 
   private scheduleSave(): void {
@@ -479,16 +579,18 @@ class App {
 
   private async save(): Promise<void> {
     const png = await this.surface.toPng();
+    const thumbnail = await this.surface.toThumbnail();
     const now = Date.now();
     let work = this.work;
     if (work === null) {
-      work = createWork(png, now);
+      work = createWork(png, now, thumbnail);
     } else {
       const page = work.pages[0];
       work = {
         ...work,
         updatedAt: now,
         pages: [{ id: page?.id ?? "page-0", image: png }],
+        thumbnail,
       };
       // 「まえにもどす」用の履歴。数分おきに 1 件だけ積む(追記のみ)。
       if (now - this.lastSnapshotAt > SNAPSHOT_INTERVAL_MS) {
@@ -497,6 +599,7 @@ class App {
       }
     }
     this.work = work;
+    this.persistProgress();
     try {
       await this.store.put(work);
     } catch (error) {
@@ -507,13 +610,15 @@ class App {
 
   private async restore(): Promise<void> {
     try {
-      const works = await this.store.list();
-      const latest = works[0];
+      // 前回ひらいていた絵の続きから。無ければいちばん新しい絵。
+      const saved = this.currentWorkId === null ? null : await this.store.get(this.currentWorkId);
+      const latest = saved !== null && !saved.deleted ? saved : (await this.store.list())[0];
       const image = latest?.pages[0]?.image;
       if (latest === undefined || image === undefined) return;
       await this.surface.restoreFrom(image);
       this.work = latest;
       this.lastSnapshotAt = latest.updatedAt;
+      this.syncHistoryButtons();
     } catch (error) {
       console.warn("ふくげんに しっぱいしました", error);
     }

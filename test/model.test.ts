@@ -44,3 +44,24 @@ describe("MemoryWorkStore", () => {
     expect((await store.list()).map((w) => w.id)).toEqual([newer.id, older.id]);
   });
 });
+
+describe("ゴミばこ(ソフトデリート)", () => {
+  it("すてても get では取れ、とりもどすと一覧へ戻る", async () => {
+    const store = new MemoryWorkStore();
+    const work = createWork(dummy, 10);
+    await store.put(work);
+
+    expect(await store.setDeleted(work.id, true)).toBe(true);
+    expect(await store.list()).toEqual([]);
+    expect((await store.listDeleted()).map((w) => w.id)).toEqual([work.id]);
+    expect(await store.get(work.id)).not.toBeNull();
+
+    await store.setDeleted(work.id, false);
+    expect((await store.list()).map((w) => w.id)).toEqual([work.id]);
+    expect(await store.listDeleted()).toEqual([]);
+  });
+
+  it("知らない ID なら false を返すだけ(落とさない)", async () => {
+    expect(await new MemoryWorkStore().setDeleted("nope", true)).toBe(false);
+  });
+});
