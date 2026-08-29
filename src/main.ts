@@ -29,7 +29,19 @@ import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
 import { Gallery } from "./ui/gallery.ts";
-import { FIT_SVG, SOUND_OFF_SVG, SOUND_ON_SVG } from "./ui/icons.ts";
+import {
+  FIT_SVG,
+  FULLSCREEN_EXIT_SVG,
+  FULLSCREEN_SVG,
+  SOUND_OFF_SVG,
+  SOUND_ON_SVG,
+} from "./ui/icons.ts";
+import {
+  isFullscreenActive,
+  isFullscreenSupported,
+  onFullscreenChange,
+  toggleFullscreen,
+} from "./core/fullscreen.ts";
 
 /** 描き終わってから保存するまでの待ち時間。描画中に保存すると重い。 */
 const AUTOSAVE_DELAY_MS = 800;
@@ -121,6 +133,7 @@ class App {
     this.buildGallery();
     this.renderToolbar();
     this.buildSoundToggle();
+    this.buildFullscreenToggle();
     this.buildFitButton();
     this.installInput(canvas);
     this.input?.setMultiDraw(this.multiDraw);
@@ -327,6 +340,30 @@ class App {
     });
     this.stage.appendChild(button);
     this.fitButton = button;
+  }
+
+  /**
+   * 全画面ボタン。使える環境にだけ出す。
+   * iPhone の WebKit は <video> 以外の全画面に対応しておらず、押しても何も起きない
+   * (ホーム画面に追加すれば全画面で開ける)。押して無反応なボタンは置かない。
+   */
+  private buildFullscreenToggle(): void {
+    if (!isFullscreenSupported()) return;
+    const button = document.createElement("button");
+    button.className = "sound-toggle fullscreen-toggle";
+    const sync = (): void => {
+      const active = isFullscreenActive();
+      button.innerHTML = active ? FULLSCREEN_EXIT_SVG : FULLSCREEN_SVG;
+      button.setAttribute("aria-label", active ? "ぜんめんを やめる" : "ぜんめんに する");
+    };
+    sync();
+    button.addEventListener("click", () => {
+      void toggleFullscreen();
+      this.sound.play("poko");
+    });
+    // Esc やシステム側の操作で抜けたときも見た目を合わせる。
+    onFullscreenChange(sync);
+    this.stage.appendChild(button);
   }
 
   private buildSoundToggle(): void {

@@ -59,3 +59,15 @@ export const FIT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" 
   stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
   <path d="M6 12V6h6M20 6h6v6M26 20v6h-6M12 26H6v-6"/>
 </svg>`;
+
+/** 全画面にする / 戻す。四隅の矢印。 */
+export const FULLSCREEN_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="#3d3730"
+  stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 12V5h7M20 5h7v7M27 20v7h-7M12 27H5v-7"/>
+  <path d="M5 5l6 6M27 5l-6 6M27 27l-6-6M5 27l6-6"/>
+</svg>`;
+
+export const FULLSCREEN_EXIT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
+  stroke="#3d3730" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 5v7H5M20 5v7h7M20 27v-7h7M12 27v-7H5"/>
+</svg>`;

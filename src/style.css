@@ -201,11 +201,16 @@ body {
   height: 32px;
 }
 
+/* 全画面ボタン。音のとなりに並べる(使える環境にだけ出る)。 */
+.fullscreen-toggle {
+  right: 80px;
+}
+
 /* 拡大しているときだけ出る「ぜんぶ見る」。押すと等倍に戻る。 */
 .fit-button {
   position: absolute;
   top: 12px;
-  right: 80px;
+  right: 148px;
   display: none;
   flex-direction: column;
   align-items: center;
