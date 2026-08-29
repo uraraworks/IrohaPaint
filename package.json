@@ -2,6 +2,14 @@
   "name": "iroha-paint",
   "private": true,
   "version": "0.1.0",
+  "description": "宝箱で道具が増えていく、ブラウザで開くだけのペイント。",
+  "license": "MIT",
+  "author": "URARA-works",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/uraraworks/IrohaPaint.git"
+  },
+  "homepage": "https://uraraworks.github.io/IrohaPaint/",
   "type": "module",
   "scripts": {
     "dev": "vite --port 5200 --strictPort",

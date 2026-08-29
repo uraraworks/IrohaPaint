@@ -10,6 +10,7 @@
 小学校低〜中学年が **説明ゼロで 1 枚描き切れる** ことだけに全振りしたペイントソフトの
 プロトタイプ（Phase 0）です。インストール不要・サーバー不要・作品はすべて端末内に保存されます。
 
+- 公開先：https://uraraworks.github.io/IrohaPaint/
 - 企画・仕様の原典：`（企画・仕様の資料）`（リポジトリ外）
 - 実装メモ・仕様からの逸脱点：[docs/phase0-notes.md](docs/phase0-notes.md)
 
@@ -63,4 +64,8 @@ GitHub Pages へ配置します（`.github/workflows/deploy.yml`）。`vite.conf
 
 ## ライセンス
 
-未定（Phase 0 では保留。公開時に決定）。
+MIT License（[LICENSE](LICENSE)）。
+
+企画段階では「Tux Paint 後継の物語を意識するなら GPL 系」も検討したが、
+**学校・先生・他の開発者がためらわずに使える**ことを優先して MIT にした。
+このアプリの狙いは配布の広さであって、派生物を縛ることではない。
