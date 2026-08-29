@@ -191,19 +191,6 @@ export const CHEST_ICON_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
   <rect x="13.5" y="12" width="5" height="8" rx="1.5" fill="#f3c64b" stroke="#3d3730" stroke-width="2"/>
 </svg>`;
 
-/** 起動直後にツールバーにあるもの。 */
-export const INITIAL_TOOLS: readonly ToolId[] = [
-  "pen",
-  "color",
-  "eraser",
-  "undo",
-  "redo",
-  "grid",
-  "together",
-  "works",
-  "done",
-];
-
 export interface Unlock {
   tool: ToolId;
   /** 必要ストローク数。 */
@@ -219,10 +206,40 @@ export const UNLOCKS: readonly Unlock[] = [
 ];
 
 /**
+ * 宝箱による解放を使うか。
+ *
+ * いまは **OFF**（道具を最初から全部見せる）。道具の種類が増えたので、
+ * まずは全部を触れる状態で作り込みと検証を進める段階にある。
+ * 解放の仕組み自体は残してあるので、検証で「最初は少ない方がいい」と分かったら
+ * true に戻すだけでよい（企画書の「育つUI」はこちらが本命）。
+ */
+export const CHEST_ENABLED = false;
+
+/** 宝箱を使うときに、起動直後からツールバーにあるもの。 */
+const STARTER_TOOLS: readonly ToolId[] = [
+  "pen",
+  "color",
+  "eraser",
+  "undo",
+  "redo",
+  "grid",
+  "together",
+  "works",
+  "done",
+];
+
+/** 起動直後にツールバーにあるもの。宝箱 OFF のときは最初から全部。 */
+export const INITIAL_TOOLS: readonly ToolId[] = CHEST_ENABLED
+  ? STARTER_TOOLS
+  : [...STARTER_TOOLS, ...UNLOCKS.map((unlock) => unlock.tool)];
+
+
+/**
  * 今の描画量で新たに現れる宝箱を返す(まだ受け取っていないもののうち先頭 1 つ)。
  * 一度に複数出すと子どもが混乱するので、必ず 1 つずつ。
  */
 export function nextUnlock(strokeCount: number, ownedTools: readonly ToolId[]): Unlock | null {
+  if (!CHEST_ENABLED) return null;
   for (const unlock of UNLOCKS) {
     if (ownedTools.includes(unlock.tool)) continue;
     if (strokeCount >= unlock.strokes) return unlock;

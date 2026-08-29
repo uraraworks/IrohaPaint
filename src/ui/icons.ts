@@ -71,3 +71,14 @@ export const FULLSCREEN_EXIT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" 
   stroke="#3d3730" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
   <path d="M12 5v7H5M20 5v7h7M20 27v-7h7M12 27v-7H5"/>
 </svg>`;
+
+/** ツールバーを左右へ送る矢印。 */
+export const CHEVRON_LEFT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
+  stroke="#3d3730" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M20 6L10 16l10 10"/>
+</svg>`;
+
+export const CHEVRON_RIGHT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
+  stroke="#3d3730" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 6l10 10-10 10"/>
+</svg>`;

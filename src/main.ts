@@ -30,6 +30,8 @@ import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
 import { Gallery } from "./ui/gallery.ts";
 import {
+  CHEVRON_LEFT_SVG,
+  CHEVRON_RIGHT_SVG,
   FIT_SVG,
   FULLSCREEN_EXIT_SVG,
   FULLSCREEN_SVG,
@@ -56,6 +58,8 @@ class App {
   private readonly paperWrap: HTMLElement;
   private readonly gridLayer: HTMLElement;
   private readonly toolbar: HTMLElement;
+  private readonly toolbarBar: HTMLElement;
+  private toolbarArrows: { left: HTMLElement; right: HTMLElement } | null = null;
   private readonly surface: Surface;
   private readonly sound = new SoundPlayer();
   private readonly guide: GuideBubble;
@@ -122,13 +126,19 @@ class App {
 
     this.toolbar = document.createElement("div");
     this.toolbar.className = "toolbar";
+    // 道具が増えても折り返さず、横に流す。折り返すとキャンバスの高さを食うため。
+    // 画面外のボタンに気づけるよう、両端に送りボタンを出す(後述の buildToolbarScroll)。
+    this.toolbarBar = document.createElement("div");
+    this.toolbarBar.className = "toolbar-bar";
+    this.toolbarBar.appendChild(this.toolbar);
 
-    root.append(this.stage, this.toolbar);
+    root.append(this.stage, this.toolbarBar);
     this.surface = new Surface(canvas);
     // 描いている最中の末尾を映す層(surface.ts の overlay)。方眼より下に敷く。
     this.paperWrap.insertBefore(this.surface.overlay, this.gridLayer);
     this.guide = new GuideBubble(document.body);
 
+    this.buildToolbarScroll();
     this.buildPanels();
     this.buildGallery();
     this.renderToolbar();
@@ -316,6 +326,89 @@ class App {
     return this.toolbar.contains(node);
   }
 
+  /**
+   * ツールバーの横スクロール。
+   *
+   * 道具は増えていくので折り返すとキャンバスの高さを食う。かといって単に横スクロールに
+   * すると「画面外にボタンがある」ことに気づけないので、**両端に送りボタンを出す**。
+   * 指ではそのままスワイプでき、マウスでもドラッグで流せる。
+   */
+  private buildToolbarScroll(): void {
+    const makeArrow = (side: "left" | "right", icon: string): HTMLElement => {
+      const button = document.createElement("button");
+      button.className = `toolbar-arrow toolbar-arrow-${side}`;
+      button.innerHTML = icon;
+      button.setAttribute("aria-label", side === "left" ? "まえの どうぐ" : "つぎの どうぐ");
+      button.addEventListener("click", () => {
+        // 1 回で 8 割ぶん送る。全部入れ替わると今どこにいるか分からなくなる。
+        const step = this.toolbar.clientWidth * 0.8;
+        this.toolbar.scrollBy({ left: side === "left" ? -step : step, behavior: "smooth" });
+      });
+      return button;
+    };
+    const left = makeArrow("left", CHEVRON_LEFT_SVG);
+    const right = makeArrow("right", CHEVRON_RIGHT_SVG);
+    this.toolbarBar.append(left, right);
+    this.toolbarArrows = { left, right };
+
+    this.toolbar.addEventListener("scroll", () => this.syncToolbarArrows(), { passive: true });
+    window.addEventListener("resize", () => this.syncToolbarArrows());
+    this.installToolbarDrag();
+    this.syncToolbarArrows();
+  }
+
+  /** 送り先が無い側の矢印は出さない(押せるのに何も起きないボタンを作らない)。 */
+  private syncToolbarArrows(): void {
+    const arrows = this.toolbarArrows;
+    if (arrows === null) return;
+    const { scrollLeft, scrollWidth, clientWidth } = this.toolbar;
+    const max = scrollWidth - clientWidth;
+    arrows.left.classList.toggle("is-visible", scrollLeft > 2);
+    arrows.right.classList.toggle("is-visible", scrollLeft < max - 2);
+  }
+
+  /**
+   * マウスでもドラッグで流せるようにする(指は端末が勝手にスクロールしてくれる)。
+   * 少しでも動かしたらボタンの click は打ち消す。
+   * ドラッグの終わりにボタンが反応すると、道具が勝手に切り替わってしまう。
+   */
+  private installToolbarDrag(): void {
+    let startX = 0;
+    let startScroll = 0;
+    let pointerId: number | null = null;
+    let moved = false;
+
+    this.toolbar.addEventListener("pointerdown", (event) => {
+      if (event.pointerType === "touch") return; // 指は端末側のスクロールに任せる
+      pointerId = event.pointerId;
+      startX = event.clientX;
+      startScroll = this.toolbar.scrollLeft;
+      moved = false;
+    });
+    this.toolbar.addEventListener("pointermove", (event) => {
+      if (pointerId !== event.pointerId) return;
+      const dx = event.clientX - startX;
+      if (Math.abs(dx) > 4) moved = true;
+      if (moved) this.toolbar.scrollLeft = startScroll - dx;
+    });
+    const end = (): void => {
+      pointerId = null;
+    };
+    this.toolbar.addEventListener("pointerup", end);
+    this.toolbar.addEventListener("pointercancel", end);
+    // 捕捉フェーズで止める。各ボタンの click より先に握りつぶす必要がある。
+    this.toolbar.addEventListener(
+      "click",
+      (event) => {
+        if (!moved) return;
+        event.stopPropagation();
+        event.preventDefault();
+        moved = false;
+      },
+      true,
+    );
+  }
+
   private buildGallery(): void {
     this.gallery = new Gallery(document.body, {
       onOpen: (id) => void this.openWork(id),
@@ -393,6 +486,7 @@ class App {
     this.syncHistoryButtons();
     this.syncGridButtons();
     this.syncMultiDraw();
+    this.syncToolbarArrows();
   }
 
   private createToolButton(id: ToolId): HTMLElement {

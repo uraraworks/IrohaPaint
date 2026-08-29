@@ -243,23 +243,84 @@ body {
 
 /* --- ツールバー --- */
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* 道具は増えていくので、幅に入り切らなければ必ず折り返す。
-     横スクロールにすると画面外のボタンに気づけず、押せないまま終わる。 */
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 10px 14px;
+/* ツールバーの外枠。両端の送りボタンを載せるため position: relative。 */
+.toolbar-bar {
+  position: relative;
+  flex: 0 0 auto;
   background: var(--bar);
   box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.08);
 }
 
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  /* 道具が増えても折り返さず横へ流す。折り返すとキャンバスの高さを食うため。
+     画面外のボタンには両端の送りボタン(.toolbar-arrow)で気づけるようにする。 */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  /* 指はここを横スワイプできる(縦は端末側に渡さない)。 */
+  touch-action: pan-x;
+  scrollbar-width: none;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+/* スクロールバーは出さない(子どもが摘まむには細すぎるし、高さを食う)。 */
+.toolbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* 入り切らないときだけ出る送りボタン。縦長にして端に貼る。 */
+.toolbar-arrow {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  z-index: 5;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.toolbar-arrow.is-visible {
+  display: flex;
+}
+
+.toolbar-arrow:active {
+  transform: scale(0.9);
+}
+
+.toolbar-arrow svg {
+  width: 22px;
+  height: 22px;
+}
+
+.toolbar-arrow-left {
+  left: 4px;
+}
+
+.toolbar-arrow-right {
+  right: 4px;
+}
+
 .bar-left .toolbar {
   flex-direction: column;
-  box-shadow: 2px 0 10px rgba(0, 0, 0, 0.08);
+  overflow-x: hidden;
   overflow-y: auto;
+  touch-action: pan-y;
+}
+
+/* 左バーのときは縦に流れるので、左右の送りボタンは出さない。 */
+.bar-left .toolbar-arrow {
+  display: none;
 }
 
 .tool-button {
@@ -377,7 +438,7 @@ ruby > rt {
 }
 
 /* 「完成！」は右端に寄せず、色と幅で目立たせる
-   (折り返したとき、右端に貼り付くと行によって位置が変わって探しにくい)。 */
+   (横に流すので、右端に貼り付けても画面外に行ってしまう)。 */
 .tool-button.done {
   width: auto;
   padding: 0 22px;
