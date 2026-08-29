@@ -8,8 +8,14 @@
 //   6. iPad(指)と PC(マウス)の両方で成立する
 import "./style.css";
 import { CRAYON_COLORS, ERASER_SIZE, PEN_SIZES } from "./core/palette.ts";
-import { appendSnapshot, createWork, snapshotOf, type WorkRecord } from "./core/model.ts";
-import { createWorkStore } from "./core/workStore.ts";
+import {
+  appendSnapshot,
+  createWork,
+  snapshotOf,
+  type SnapshotReason,
+  type WorkRecord,
+} from "./core/model.ts";
+import { createWorkStore, requestPersistentStorage } from "./core/workStore.ts";
 import { hexToRgba, Surface } from "./core/surface.ts";
 import { installPointerInput } from "./core/pointerInput.ts";
 import { clampView, IDENTITY, panBy, toCss, zoomAt, type ViewTransform } from "./core/viewport.ts";
@@ -103,6 +109,8 @@ class App {
       }
     });
     void this.restore();
+    // 作品が勝手に消えないよう永続化を頼んでおく(結果は待たない)。
+    void requestPersistentStorage();
   }
 
   // --- 組み立て ---------------------------------------------------------
@@ -176,6 +184,8 @@ class App {
       onCreate: () => void this.createWork(),
       onTrash: (id) => void this.trashWork(id),
       onRestore: (id) => void this.restoreWork(id),
+      onHistory: (id) => void this.showHistory(id),
+      onRevert: (workId, snapshotId) => void this.revertTo(workId, snapshotId),
     });
     this.gallery.onTabChange(() => void this.refreshGallery());
   }
@@ -508,6 +518,56 @@ class App {
     this.gallery.render(works, this.work?.id ?? null, Date.now());
   }
 
+  /**
+   * 「ひらいた直後の姿」を履歴に残す。
+   * 共用タブレットで他の子の絵に上から描いてしまう事故は、これが残っていれば必ず戻せる
+   * (仕様書§7.5)。描き始めてからでは遅いので、開いた時点で撮る。
+   */
+  private async captureSnapshot(reason: SnapshotReason): Promise<void> {
+    const work = this.work;
+    if (work === null) return;
+    const now = Date.now();
+    const updated = appendSnapshot(work, snapshotOf(work, now, reason));
+    this.work = updated;
+    this.lastSnapshotAt = now;
+    try {
+      await this.store.put(updated);
+    } catch (error) {
+      console.warn("りれきの ほぞんに しっぱいしました", error);
+    }
+  }
+
+  /** 履歴一覧をひらく。 */
+  private async showHistory(id: string): Promise<void> {
+    const work = await this.store.get(id);
+    if (work === null) return;
+    this.gallery.renderHistory(work, Date.now());
+  }
+
+  /**
+   * 選んだ履歴の姿に戻す。戻す直前の姿も履歴に積むので、巻き戻し自体をやり直せる
+   * (「戻したらもっとひどくなった」を作らない)。
+   */
+  private async revertTo(workId: string, snapshotId: string): Promise<void> {
+    const work = await this.store.get(workId);
+    const snapshot = work?.snapshots.find((item) => item.id === snapshotId);
+    const image = snapshot?.pages[0]?.image;
+    if (work === null || work === undefined || snapshot === undefined || image === undefined) return;
+
+    // 巻き戻す作品を開いていない場合は、まずそちらへ移る。
+    if (this.work?.id !== workId) {
+      await this.save();
+      this.work = work;
+    }
+    await this.captureSnapshot("revert");
+    await this.surface.restoreFrom(image);
+    await this.save();
+    this.persistProgress();
+    this.syncHistoryButtons();
+    this.sound.play("fanfare");
+    this.gallery.close();
+  }
+
   private async openWork(id: string): Promise<void> {
     if (id === this.work?.id) {
       this.gallery.close();
@@ -520,6 +580,8 @@ class App {
     await this.surface.restoreFrom(image);
     this.work = work;
     this.lastSnapshotAt = work.updatedAt;
+    // ひらいた瞬間の姿を残す。この 1 枚が上書き事故の保険になる。
+    await this.captureSnapshot("open");
     this.persistProgress();
     this.syncHistoryButtons();
     this.sound.play("poko");
@@ -592,9 +654,9 @@ class App {
         pages: [{ id: page?.id ?? "page-0", image: png }],
         thumbnail,
       };
-      // 「まえにもどす」用の履歴。数分おきに 1 件だけ積む(追記のみ)。
+      // 「前に戻す」用の履歴。描いている間は数分おきに 1 件だけ積む(追記のみ)。
       if (now - this.lastSnapshotAt > SNAPSHOT_INTERVAL_MS) {
-        work = appendSnapshot(work, snapshotOf(work, now));
+        work = appendSnapshot(work, snapshotOf(work, now, "auto"));
         this.lastSnapshotAt = now;
       }
     }
@@ -619,6 +681,8 @@ class App {
       this.work = latest;
       this.lastSnapshotAt = latest.updatedAt;
       this.syncHistoryButtons();
+      // 起動して絵が出た時点も「ひらいた」に含める(別の子が使い始める入口はここ)。
+      await this.captureSnapshot("open");
     } catch (error) {
       console.warn("ふくげんに しっぱいしました", error);
     }

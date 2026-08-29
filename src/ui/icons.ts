@@ -42,3 +42,14 @@ export const NEW_PAGE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
   <rect x="7" y="4" width="18" height="24" rx="3" fill="#fffdf7" stroke="#3d3730" stroke-width="2"/>
   <path d="M16 11v10M11 16h10" fill="none" stroke="#4aa3df" stroke-width="3" stroke-linecap="round"/>
 </svg>`;
+
+/** 履歴(前に戻す)。時計に反時計回りの矢印。 */
+export const HISTORY_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <circle cx="17" cy="17" r="10" fill="#f3c64b" stroke="#3d3730" stroke-width="2"/>
+  <path d="M17 11v6l4 3" fill="none" stroke="#3d3730" stroke-width="2" stroke-linecap="round"
+    stroke-linejoin="round"/>
+  <path d="M7 12a11 11 0 0 1 3-4" fill="none" stroke="#3d3730" stroke-width="2.5"
+    stroke-linecap="round"/>
+  <path d="M5 6v5h5" fill="none" stroke="#3d3730" stroke-width="2.5" stroke-linecap="round"
+    stroke-linejoin="round"/>
+</svg>`;

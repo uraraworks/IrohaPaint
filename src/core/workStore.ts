@@ -143,6 +143,22 @@ export class IndexedDbWorkStore implements WorkStore {
   }
 }
 
+/**
+ * 保存領域を「消えにくい」扱いにするよう頼む。
+ * Safari は使われていないサイトのデータを一定期間で消すことがあり、
+ * 学童の共用 iPad のように「たまにしか開かない」使い方だと作品ごと消えかねない。
+ * 断られても描くことには影響しないので、結果は握りつぶす。
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  try {
+    if (navigator.storage?.persist === undefined) return false;
+    if (await navigator.storage.persisted()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
 /** IndexedDB が使えない環境(プライベートブラウズ等)ではメモリに落とす。 */
 export function createWorkStore(): WorkStore {
   if (typeof indexedDB === "undefined") return new MemoryWorkStore();

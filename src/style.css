@@ -463,6 +463,20 @@ ruby > rt {
   font-weight: 700;
 }
 
+/* 履歴カードの「ひらいた とき」等の一言。 */
+.gallery-note {
+  min-height: 20px;
+  text-align: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+/* 履歴ボタンは「捨てる」と並ぶので、押し間違えないよう色を分ける。 */
+.gallery-history {
+  background: #eaf4fc;
+}
+
 .gallery-action {
   min-height: 52px;
   border: none;

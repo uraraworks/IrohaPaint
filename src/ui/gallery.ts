@@ -7,20 +7,24 @@
 //
 // 仕様書§7.5「消えない設計」に従い、「すてる」はゴミばこ行き(フラグを立てるだけ)。
 // ゴミばこは一覧から覗けて、いつでも「とりもどす」ができる。
-import type { WorkRecord } from "../core/model.ts";
+import type { WorkRecord, WorkSnapshot } from "../core/model.ts";
 import type { LabelPart } from "../core/tools.ts";
 import { TOOL_DEFS } from "../core/tools.ts";
 import { plainText, renderRuby } from "./label.ts";
-import { CLOSE_SVG, NEW_PAGE_SVG, RESTORE_SVG, TRASH_SVG } from "./icons.ts";
+import { CLOSE_SVG, HISTORY_SVG, NEW_PAGE_SVG, RESTORE_SVG, TRASH_SVG } from "./icons.ts";
 
 export interface GalleryHandlers {
   onOpen: (id: string) => void;
   onCreate: () => void;
   onTrash: (id: string) => void;
   onRestore: (id: string) => void;
+  /** その作品の履歴一覧をひらく。 */
+  onHistory: (id: string) => void;
+  /** 選んだ履歴の姿に戻す。 */
+  onRevert: (workId: string, snapshotId: string) => void;
 }
 
-export type GalleryTab = "works" | "trash";
+export type GalleryTab = "works" | "trash" | "history";
 
 /**
  * 日付も他の文言と同じく漢字＋総ルビ(L2)で出す。年は同じ年なら出さない。
@@ -40,6 +44,14 @@ export function formatDate(timestamp: number, now: number): LabelPart[] {
   return [{ base: String(date.getFullYear()) }, { base: "年", ruby: "ねん" }, ...monthDay];
 }
 
+/** 履歴は同じ日に何枚も並ぶので、日付に時刻を足す。 */
+export function formatDateTime(timestamp: number, now: number): LabelPart[] {
+  const date = new Date(timestamp);
+  const hh = String(date.getHours());
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return [...formatDate(timestamp, now), { base: " " }, { base: `${hh}:${mm}` }];
+}
+
 /** UI 文言。すべて漢字＋総ルビで持つ。 */
 const TEXT = {
   works: [{ base: "作品", ruby: "さくひん" }],
@@ -50,6 +62,16 @@ const TEXT = {
   // ツールバーの「描く」と字を揃える(同じ行為に別の字を当てない)。
   now: [{ base: "今", ruby: "いま" }, { base: "描", ruby: "か" }, { base: "いてる" }],
   trashIt: [{ base: "捨", ruby: "す" }, { base: "てる" }],
+  history: [{ base: "前", ruby: "まえ" }, { base: "に" }, { base: "戻", ruby: "もど" }, { base: "す" }],
+  historyTitle: [
+    { base: "前", ruby: "まえ" },
+    { base: "の" },
+    { base: "絵", ruby: "え" },
+  ],
+  revert: [{ base: "これに" }, { base: "戻", ruby: "もど" }, { base: "す" }],
+  opened: [{ base: "ひらいた とき" }],
+  reverted: [{ base: "戻", ruby: "もど" }, { base: "す まえ" }],
+  noHistory: [{ base: "まだ ありません" }],
   restore: [{ base: "取", ruby: "と" }, { base: "り" }, { base: "戻", ruby: "もど" }, { base: "す" }],
   empty: [{ base: "ゴミ" }, { base: "箱", ruby: "ばこ" }, { base: "は からっぽ" }],
 } satisfies Record<string, LabelPart[]>;
@@ -129,12 +151,69 @@ export class Gallery {
     }
   }
 
+  /** 1 つの作品の履歴を並べる。カードの形は作品一覧と同じにする。 */
+  renderHistory(work: WorkRecord, now: number): void {
+    this.tab = "history";
+    this.releaseUrls();
+    this.grid.textContent = "";
+    this.title.textContent = "";
+    this.title.appendChild(renderRuby(TEXT.historyTitle));
+    this.setTabButton();
+
+    // 新しい順に並べる。探すのはたいてい「さっきの姿」なので。
+    const snapshots = [...work.snapshots].sort((a, b) => b.createdAt - a.createdAt);
+    if (snapshots.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "gallery-empty";
+      empty.appendChild(renderRuby(TEXT.noHistory));
+      this.grid.appendChild(empty);
+      return;
+    }
+    for (const snapshot of snapshots) {
+      this.grid.appendChild(this.createHistoryCard(work.id, snapshot, now));
+    }
+  }
+
+  private createHistoryCard(workId: string, snapshot: WorkSnapshot, now: number): HTMLElement {
+    const card = document.createElement("div");
+    card.className = "gallery-card";
+
+    const thumb = document.createElement("div");
+    thumb.className = "gallery-thumb";
+    const image = snapshot.thumbnail ?? snapshot.pages[0]?.image;
+    if (image !== undefined) {
+      const url = URL.createObjectURL(image);
+      this.urls.push(url);
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      thumb.appendChild(img);
+    }
+
+    const caption = document.createElement("div");
+    caption.className = "gallery-caption";
+    caption.appendChild(renderRuby(formatDateTime(snapshot.createdAt, now)));
+
+    // どういう場面の姿かを一言添える。「ひらいた とき」が上書き事故の戻し先になる。
+    const note = document.createElement("div");
+    note.className = "gallery-note";
+    if (snapshot.reason === "open") note.appendChild(renderRuby(TEXT.opened));
+    else if (snapshot.reason === "revert") note.appendChild(renderRuby(TEXT.reverted));
+
+    const action = createLabeledButton("gallery-action", RESTORE_SVG, TEXT.revert);
+    action.addEventListener("click", () => this.handlers.onRevert(workId, snapshot.id));
+
+    card.append(thumb, caption, note, action);
+    return card;
+  }
+
   private setTabButton(): void {
     const isWorks = this.tab === "works";
     const icon = this.tabButton.querySelector(".btn-icon");
     const label = this.tabButton.querySelector(".btn-label");
     if (icon !== null) icon.innerHTML = isWorks ? TRASH_SVG : (TOOL_DEFS.works.iconSvg ?? "");
     const parts = isWorks ? TEXT.trash : TEXT.backToWorks;
+    // 履歴からもゴミ箱からも、同じボタンで作品一覧へ帰れる(迷子にしない)。
     if (label !== null) {
       label.textContent = "";
       label.appendChild(renderRuby(parts));
@@ -179,6 +258,15 @@ export class Gallery {
     action.addEventListener("click", () =>
       this.tab === "works" ? this.handlers.onTrash(work.id) : this.handlers.onRestore(work.id),
     );
+
+    if (this.tab === "works") {
+      // 履歴は作品ごとにひらく。「誰かに上から描かれた」に気づいた子が
+      // その作品の中だけを見て戻せるようにする。
+      const history = createLabeledButton("gallery-action gallery-history", HISTORY_SVG, TEXT.history);
+      history.addEventListener("click", () => this.handlers.onHistory(work.id));
+      card.append(open, caption, history, action);
+      return card;
+    }
 
     card.append(open, caption, action);
     return card;

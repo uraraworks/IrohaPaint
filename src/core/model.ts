@@ -29,7 +29,18 @@ export interface WorkSnapshot {
   /** epoch ミリ秒。 */
   createdAt: number;
   pages: PageData[];
+  /** 履歴一覧用の小さい PNG。 */
+  thumbnail?: Blob;
+  /**
+   * なぜ残したか。
+   * open   = 誰かが作品をひらいた直後(＝描き始める前の姿)。上書き事故の復旧はこれが要
+   * auto   = 描いている途中の定期保存
+   * revert = 巻き戻す直前の姿(巻き戻し自体を取り消せるようにする)
+   */
+  reason: SnapshotReason;
 }
+
+export type SnapshotReason = "open" | "auto" | "revert";
 
 export interface WorkRecord {
   id: string;
@@ -52,8 +63,61 @@ export interface WorkRecord {
   snapshots: WorkSnapshot[];
 }
 
-/** スナップショットの保持上限。超えたら古い方から間引く(直近は必ず残る)。 */
-export const MAX_SNAPSHOTS = 12;
+/**
+ * 履歴の保持ルール(Time Machine 方式)。
+ * 直近は密に、古くなるほど粗く残す。全部残すと 1 作品で数十 MB になり、
+ * かといって「直近 N 個」だけだと、翌日に別の子が延々描いた時点で
+ * 前日の姿が押し出されてしまう(＝上書き事故の復旧に間に合わない)。
+ */
+export const KEEP_RECENT = 10;
+export const KEEP_DAILY_DAYS = 14;
+export const KEEP_WEEKLY_WEEKS = 8;
+/** 何があってもこの数は超えない。 */
+export const MAX_SNAPSHOTS = 40;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** その時刻が属する日(ローカル)のキー。 */
+function dayKey(timestamp: number): string {
+  const date = new Date(timestamp);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+/**
+ * 履歴を間引く。残すのは
+ *   - 直近 KEEP_RECENT 件(無条件)
+ *   - そこから KEEP_DAILY_DAYS 日ぶんは 1 日 1 件(その日の最後の姿)
+ *   - さらに古いものは KEEP_WEEKLY_WEEKS 週ぶんを 1 週 1 件
+ * 並びは古い順のまま返す。
+ */
+export function thinSnapshots(
+  snapshots: readonly WorkSnapshot[],
+  now: number,
+): WorkSnapshot[] {
+  const sorted = [...snapshots].sort((a, b) => a.createdAt - b.createdAt);
+  const keep = new Set<string>();
+
+  for (const snapshot of sorted.slice(-KEEP_RECENT)) keep.add(snapshot.id);
+
+  // 日ごと / 週ごとの代表は「その期間の最後の 1 枚」。後から見て
+  // 「その日の終わりの姿」が並ぶ方が、子どもには探しやすい。
+  const dailyLimit = now - KEEP_DAILY_DAYS * DAY_MS;
+  const weeklyLimit = now - KEEP_WEEKLY_WEEKS * 7 * DAY_MS;
+  const daily = new Map<string, string>();
+  const weekly = new Map<number, string>();
+  for (const snapshot of sorted) {
+    if (snapshot.createdAt >= dailyLimit) {
+      daily.set(dayKey(snapshot.createdAt), snapshot.id);
+    } else if (snapshot.createdAt >= weeklyLimit) {
+      weekly.set(Math.floor((now - snapshot.createdAt) / (7 * DAY_MS)), snapshot.id);
+    }
+  }
+  for (const id of daily.values()) keep.add(id);
+  for (const id of weekly.values()) keep.add(id);
+
+  const kept = sorted.filter((snapshot) => keep.has(snapshot.id));
+  return kept.length > MAX_SNAPSHOTS ? kept.slice(kept.length - MAX_SNAPSHOTS) : kept;
+}
 
 let idCounter = 0;
 
@@ -77,25 +141,25 @@ export function createWork(image: Blob, now: number, thumbnail?: Blob): WorkReco
   };
 }
 
-/**
- * 履歴を 1 件追記する。上限を超えた分は *古い側から* 落とす。
- * 「まえにもどす」で子どもが選ぶのは基本的に直近なので、新しい側は必ず残す。
- */
+/** 履歴を 1 件追記し、保持ルールに従って間引く。 */
 export function appendSnapshot(work: WorkRecord, snapshot: WorkSnapshot): WorkRecord {
-  const snapshots = [...work.snapshots, snapshot];
-  const overflow = snapshots.length - MAX_SNAPSHOTS;
   return {
     ...work,
-    snapshots: overflow > 0 ? snapshots.slice(overflow) : snapshots,
-    updatedAt: snapshot.createdAt,
+    snapshots: thinSnapshots([...work.snapshots, snapshot], snapshot.createdAt),
+    updatedAt: Math.max(work.updatedAt, snapshot.createdAt),
   };
 }
 
-/** 現在のページから履歴 1 件分を作る。画像 Blob は不変なので参照を共有してよい。 */
-export function snapshotOf(work: WorkRecord, now: number): WorkSnapshot {
+/**
+ * 現在のページから履歴 1 件分を作る。
+ * 画像 Blob は不変なので参照を共有してよい(同じ絵を二重に持たない)。
+ */
+export function snapshotOf(work: WorkRecord, now: number, reason: SnapshotReason): WorkSnapshot {
   return {
     id: createId("snap"),
     createdAt: now,
     pages: work.pages.map((page) => ({ ...page })),
+    ...(work.thumbnail === undefined ? {} : { thumbnail: work.thumbnail }),
+    reason,
   };
 }
