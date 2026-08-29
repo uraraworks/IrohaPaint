@@ -11,8 +11,7 @@
 プロトタイプ（Phase 0）です。インストール不要・サーバー不要・作品はすべて端末内に保存されます。
 
 - 公開先：https://uraraworks.github.io/IrohaPaint/
-- 企画・仕様の原典：`（企画・仕様の資料）`（リポジトリ外）
-- 実装メモ・仕様からの逸脱点：[docs/phase0-notes.md](docs/phase0-notes.md)
+- 実装メモ・設計判断：[docs/phase0-notes.md](docs/phase0-notes.md)
 
 ## 使い方（開発）
 
