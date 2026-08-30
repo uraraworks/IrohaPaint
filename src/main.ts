@@ -34,6 +34,7 @@ import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
 import { Gallery } from "./ui/gallery.ts";
+import { installHScroll, type HScrollArrows, type HScrollControl } from "./ui/hscroll.ts";
 import {
   CHEVRON_LEFT_SVG,
   CHEVRON_RIGHT_SVG,
@@ -79,7 +80,7 @@ class App {
   private readonly underlayStore: UnderlayStore = createUnderlayStore();
   private readonly toolbar: HTMLElement;
   private readonly toolbarBar: HTMLElement;
-  private toolbarArrows: { left: HTMLElement; right: HTMLElement } | null = null;
+  private toolbarScroll: HScrollControl | null = null;
   private readonly surface: Surface;
   private readonly sound = new SoundPlayer();
   private readonly guide: GuideBubble;
@@ -103,8 +104,12 @@ class App {
   private underlayBitmap: ImageBitmap | null = null;
   /** 取り込み中の二重実行を防ぐガード(数MBの写真のデコードは時間がかかる)。 */
   private importingUnderlay = false;
+  /** chooseUnderlay() が store.list() を待っている間の二重実行を防ぐガード。 */
+  private choosingUnderlay = false;
   /** マスのサブメニューの下に出す、取り込み済みの下敷きを選び直す帯。 */
   private underlayStrip!: HTMLElement;
+  private underlayStripTrack!: HTMLElement;
+  private underlayStripScroll: HScrollControl | null = null;
   /** 帯のサムネイル用に発行した objectURL。作り直すたびに必ず revoke する(gallery.ts と同じ作法)。 */
   private underlayThumbUrls: string[] = [];
   private nib: NibId = "crayon";
@@ -313,7 +318,7 @@ class App {
           // 写真だけは特別扱い。下敷きが無ければまずファイルを選ばせる
           // (選ばれるまでは gridMode を変えないので、キャンセルされても
           // 「写真モードなのに何も無い」状態にはならない)。
-          this.chooseUnderlay();
+          void this.chooseUnderlay();
           return;
         }
         this.setGridMode(id);
@@ -323,14 +328,31 @@ class App {
     }
     // 写真が選ばれている間だけ、取り込み済みの下敷きを選び直す帯を出す(refreshUnderlayStrip で中身を作る)。
     // パネルの flex-wrap を利用して独立した 1 行にするため CSS 側で flex-basis: 100% にしてある。
+    // 帯自身は左右の送りボタンを乗せる外枠、実際にスクロールするのは中の underlayStripTrack。
     this.underlayStrip = document.createElement("div");
     this.underlayStrip.className = "underlay-strip";
+    this.underlayStripTrack = document.createElement("div");
+    this.underlayStripTrack.className = "underlay-strip-track";
+    const arrowLeft = document.createElement("button");
+    arrowLeft.className = "underlay-strip-arrow underlay-strip-arrow-left";
+    arrowLeft.innerHTML = CHEVRON_LEFT_SVG;
+    arrowLeft.setAttribute("aria-label", "まえの しゃしん");
+    const arrowRight = document.createElement("button");
+    arrowRight.className = "underlay-strip-arrow underlay-strip-arrow-right";
+    arrowRight.innerHTML = CHEVRON_RIGHT_SVG;
+    arrowRight.setAttribute("aria-label", "つぎの しゃしん");
+    this.underlayStrip.append(arrowLeft, this.underlayStripTrack, arrowRight);
+    this.underlayStripScroll = installHScroll(this.underlayStripTrack, { left: arrowLeft, right: arrowRight });
     panel.element.appendChild(this.underlayStrip);
     return panel;
   }
 
-  /** 「マス」から写真を選んだときの入口。 */
-  private chooseUnderlay(): void {
+  /**
+   * 「マス」から写真を選んだときの入口。
+   * いま読み込んでいるものが無くても、取り込み済みが端末に残っていることがある
+   * (前回なしで終えた等)。ここで store を見ないと、12 枚あっても一覧へ戻れない。
+   */
+  private async chooseUnderlay(): Promise<void> {
     if (this.underlayRecord !== null) {
       // 既に取り込みがあれば、まず今選んでいるものをそのまま表示する。
       // 選び直しは写真モードの下に出る帯(underlay-strip)から行う。
@@ -338,7 +360,27 @@ class App {
       this.sound.play("poko");
       return;
     }
-    this.underlayInput.click();
+    if (this.choosingUnderlay) return;
+    this.choosingUnderlay = true;
+    try {
+      const records = await this.underlayStore.list();
+      if (records.length === 0) {
+        // 本当に何も無ければ、これまで通りファイル選択を開く。
+        this.underlayInput.click();
+        return;
+      }
+      // 複数あれば直近に使ったものを選ぶ。選び直し(lastUsedAt 更新・progress の
+      // underlayId 更新・帯の作り直し)は selectUnderlay() をそのまま使い回す。
+      const latest = records.reduce((a, b) => (b.lastUsedAt > a.lastUsedAt ? b : a));
+      this.setGridMode("photo");
+      await this.selectUnderlay(latest);
+      // setGridMode の時点では underlayRecord がまだ null なので、underlayCanvas の
+      // is-on 判定(gridMode === "photo" && underlayRecord !== null)が false のまま
+      // 取り残される。selectUnderlay が underlayRecord を埋めた後にもう一度揃える。
+      this.syncGridButtons();
+    } finally {
+      this.choosingUnderlay = false;
+    }
   }
 
   private createNibRow(): HTMLElement {
@@ -426,74 +468,17 @@ class App {
       button.className = `toolbar-arrow toolbar-arrow-${side}`;
       button.innerHTML = icon;
       button.setAttribute("aria-label", side === "left" ? "まえの どうぐ" : "つぎの どうぐ");
-      button.addEventListener("click", () => {
-        // 1 回で 8 割ぶん送る。全部入れ替わると今どこにいるか分からなくなる。
-        const step = this.toolbar.clientWidth * 0.8;
-        this.toolbar.scrollBy({ left: side === "left" ? -step : step, behavior: "smooth" });
-      });
       return button;
     };
     const left = makeArrow("left", CHEVRON_LEFT_SVG);
     const right = makeArrow("right", CHEVRON_RIGHT_SVG);
     this.toolbarBar.append(left, right);
-    this.toolbarArrows = { left, right };
-
-    this.toolbar.addEventListener("scroll", () => this.syncToolbarArrows(), { passive: true });
-    window.addEventListener("resize", () => this.syncToolbarArrows());
-    this.installToolbarDrag();
-    this.syncToolbarArrows();
+    this.toolbarScroll = installHScroll(this.toolbar, { left, right });
   }
 
-  /** 送り先が無い側の矢印は出さない(押せるのに何も起きないボタンを作らない)。 */
+  /** 送り先が無い側の矢印は出さない(押せるのに何も起きないボタンを作らない)。内容が増減した直後に呼ぶ。 */
   private syncToolbarArrows(): void {
-    const arrows = this.toolbarArrows;
-    if (arrows === null) return;
-    const { scrollLeft, scrollWidth, clientWidth } = this.toolbar;
-    const max = scrollWidth - clientWidth;
-    arrows.left.classList.toggle("is-visible", scrollLeft > 2);
-    arrows.right.classList.toggle("is-visible", scrollLeft < max - 2);
-  }
-
-  /**
-   * マウスでもドラッグで流せるようにする(指は端末が勝手にスクロールしてくれる)。
-   * 少しでも動かしたらボタンの click は打ち消す。
-   * ドラッグの終わりにボタンが反応すると、道具が勝手に切り替わってしまう。
-   */
-  private installToolbarDrag(): void {
-    let startX = 0;
-    let startScroll = 0;
-    let pointerId: number | null = null;
-    let moved = false;
-
-    this.toolbar.addEventListener("pointerdown", (event) => {
-      if (event.pointerType === "touch") return; // 指は端末側のスクロールに任せる
-      pointerId = event.pointerId;
-      startX = event.clientX;
-      startScroll = this.toolbar.scrollLeft;
-      moved = false;
-    });
-    this.toolbar.addEventListener("pointermove", (event) => {
-      if (pointerId !== event.pointerId) return;
-      const dx = event.clientX - startX;
-      if (Math.abs(dx) > 4) moved = true;
-      if (moved) this.toolbar.scrollLeft = startScroll - dx;
-    });
-    const end = (): void => {
-      pointerId = null;
-    };
-    this.toolbar.addEventListener("pointerup", end);
-    this.toolbar.addEventListener("pointercancel", end);
-    // 捕捉フェーズで止める。各ボタンの click より先に握りつぶす必要がある。
-    this.toolbar.addEventListener(
-      "click",
-      (event) => {
-        if (!moved) return;
-        event.stopPropagation();
-        event.preventDefault();
-        moved = false;
-      },
-      true,
-    );
+    this.toolbarScroll?.sync();
   }
 
   private buildGallery(): void {
@@ -688,6 +673,7 @@ class App {
         break;
       case "grid":
         this.gridPanel.toggle(button);
+        if (this.gridPanel.isOpen) this.onGridPanelOpened();
         this.sound.play("poko");
         break;
       case "works":
@@ -852,14 +838,21 @@ class App {
    * 帯の DOM を作り直す。
    * 並びは records の順(= store.list() の createdAt 新しい順)のまま使う。lastUsedAt 順にすると
    * 使うたびに並びが変わって探せなくなるため、並び順は取り込んだ順で固定する。
+   *
+   * 押すたびに帯全体を作り直すので、スクロール位置を保存しておいて作り直したあとに戻す
+   * (しないと選ぶたびに帯が左端へ飛んで、右の方の写真を続けて選べなくなる)。
    */
   private renderUnderlayStrip(records: readonly UnderlayRecord[]): void {
+    const previousScrollLeft = this.underlayStripTrack.scrollLeft;
     // 古い objectURL を握ったままにしない(写真ぶんメモリが積み上がる。gallery.ts と同じ作法)。
     for (const url of this.underlayThumbUrls) URL.revokeObjectURL(url);
     this.underlayThumbUrls = [];
-    this.underlayStrip.textContent = "";
+    this.underlayStripTrack.textContent = "";
     this.underlayStrip.classList.toggle("is-visible", this.gridMode === "photo");
-    if (this.gridMode !== "photo") return;
+    if (this.gridMode !== "photo") {
+      this.underlayStripScroll?.sync();
+      return;
+    }
 
     // 先頭に「＋」。何枚溜まってもスクロールせずに指が届く位置に置く。
     const add = document.createElement("button");
@@ -867,7 +860,7 @@ class App {
     add.innerHTML = UNDERLAY_ADD_SVG;
     add.setAttribute("aria-label", "しゃしんをふやす");
     add.addEventListener("click", () => this.underlayInput.click());
-    this.underlayStrip.appendChild(add);
+    this.underlayStripTrack.appendChild(add);
 
     for (const record of records) {
       const button = document.createElement("button");
@@ -881,8 +874,28 @@ class App {
       img.alt = "";
       button.appendChild(img);
       button.addEventListener("click", () => void this.selectUnderlay(record));
-      this.underlayStrip.appendChild(button);
+      this.underlayStripTrack.appendChild(button);
     }
+    // 作り直した直後は scrollWidth が確定していないブラウザがあるため、次フレームで復元する。
+    this.underlayStripTrack.scrollLeft = previousScrollLeft;
+    this.underlayStripScroll?.sync();
+    requestAnimationFrame(() => {
+      this.underlayStripTrack.scrollLeft = previousScrollLeft;
+      this.underlayStripScroll?.sync();
+    });
+  }
+
+  /**
+   * マスのパネルを開いたときの後始末。
+   *  - 帯は開くまで display: none で幅 0 のため、閉じている間に届いた sync() は
+   *    「送り先が無い」という誤った結果のまま残ってしまう。開いた直後に必ず計算し直す。
+   *  - 選んでいる下敷きが帯の外(スクロールしないと見えない位置)にあれば、
+   *    それが見える位置までスクロールする(12 枚あると隠れていることがあるため)。
+   */
+  private onGridPanelOpened(): void {
+    this.underlayStripScroll?.sync();
+    const active = this.underlayStripTrack.querySelector<HTMLElement>(".underlay-thumb.is-active");
+    active?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 
   /**

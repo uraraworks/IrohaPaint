@@ -543,33 +543,95 @@ ruby > rt {
   box-shadow: 0 0 0 5px var(--accent);
 }
 
-/* 下敷き(なし / 方眼 / ビーズ / 写真)を選ぶパネル。ペン先と同じ形のボタンを使う。 */
+/*
+ * 下敷き(なし / 方眼 / ビーズ / 写真)を選ぶパネル。ペン先と同じ形のボタンを使う。
+ * max-width を与えて帯(.underlay-strip-track)の中身にパネル自身の幅を押し広げさせない。
+ * 中身が押し広げると一度も溢れず overflow-x: auto が効かなくなる上、帯の描画が進むたびに
+ * 自然幅が変わって Panel.position() の計算結果がぶれ、開くたびに左へずれてしまう。
+ * 404px は「なし/方眼/ビーズ/写真」4 ボタン(84px × 4 + gap 12px × 3 + 左右 padding 16px × 2)が
+ * 1 行に収まる実測値。狭い端末では画面幅からはみ出さないよう min() で更に絞る。
+ */
 .grid-panel {
   gap: 12px;
+  max-width: min(calc(100vw - 24px), 404px);
 }
 
 /*
  * 写真が選ばれている間だけ出る、取り込み済みの下敷きを選び直す帯。
  * .panel は flex-wrap: wrap なので、なし/方眼/ビーズ/写真の 4 ボタンの下に
  * 独立した 1 行として折り返させるため flex-basis: 100% にする。
- * ツールバー(.toolbar)や履歴タイムライン(.gallery-grid.is-timeline)と同じく横スクロール。
+ * 帯自身(.underlay-strip)は左右の送りボタンを乗せる外枠。実際に横スクロールするのは
+ * 中の .underlay-strip-track で、ツールバー(.toolbar)と同じ作法(installHScroll)を使う。
  */
 .underlay-strip {
   display: none;
+  position: relative;
   flex-basis: 100%;
+  /* flex item の既定 min-width:auto のままだと、中身(帯の全サムネイル幅)がこの幅の
+     下限になり、.grid-panel の max-width を設けても結局パネルごと押し広げてしまう。
+     0 にして「中身の幅は関係なく、割り当てられた幅に収める」側へ倒す。 */
+  min-width: 0;
+  align-items: center;
+}
+
+.underlay-strip.is-visible {
+  display: flex;
+}
+
+.underlay-strip-track {
+  display: flex;
+  flex: 1 1 auto;
+  /* 同じ理由で 0 に。.underlay-strip の幅いっぱいまでしか広がらないようにする。 */
+  min-width: 0;
   align-items: center;
   gap: 12px;
   overflow-x: auto;
   scrollbar-width: none;
   touch-action: pan-x;
+  scroll-behavior: smooth;
 }
 
-.underlay-strip::-webkit-scrollbar {
+.underlay-strip-track::-webkit-scrollbar {
   display: none;
 }
 
-.underlay-strip.is-visible {
+/* ツールバーの送りボタンと規格を揃えつつ、帯の高さ(88px)に収まる小さめのサイズにする。 */
+.underlay-strip-arrow {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 5;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.underlay-strip-arrow.is-visible {
   display: flex;
+}
+
+.underlay-strip-arrow:active {
+  transform: scale(0.9);
+}
+
+.underlay-strip-arrow svg {
+  width: 18px;
+  height: 18px;
+}
+
+.underlay-strip-arrow-left {
+  left: 0;
+}
+
+.underlay-strip-arrow-right {
+  right: 0;
 }
 
 /* ヒット領域は指基準。88px 角(設計の芯)を確保する。 */
