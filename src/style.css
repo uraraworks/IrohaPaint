@@ -662,17 +662,53 @@ ruby > rt {
   }
 }
 
+/*
+ * 色パネル自身には幅の上限が無く、中の .swatches(6 列固定・68px)がそのまま
+ * パネルの幅(500px)になっていたため、狭い画面(390px)で左端の列(黒・茶)が
+ * 画面外(実測 左端 -122px)へ出て選べなくなっていた。
+ *
+ * 直し方は .grid-panel(パネル側に max-width)とは変えている。.color-panel は
+ * flex(is-open で display:flex)で、中身は .swatches 1 つだけ(クレヨン/ビーズは
+ * 出し分けで片方が display:none)。パネル側に width/max-width を付けても、
+ * auto-fill は「渡された幅が不定(auto)」だと 1 列に潰れてしまい、逆に auto-fill
+ * が正しく列数を計算するための確定した幅がそもそも無い、という循環になる
+ * (実際に試すと 68px 1 列・パネル幅 100px まで潰れた)。
+ * そこで .swatches 自身に width で確定値を与える。468px / 386px は
+ * 元々の(6 列時の)格子の幅で、広い画面ではこれまでどおりの見た目になる。
+ * .color-panel には width を付けない(2 組で幅が違うので、表示中の
+ * .swatches の実寸にパネルをそのまま合わせたいため)。
+ */
 .swatches {
   display: grid;
-  grid-template-columns: repeat(6, 68px);
+  grid-template-columns: repeat(auto-fill, 68px);
   gap: 12px;
+  justify-content: center;
+  /* 56px = パネルの左右 padding(16px×2) + .grid-panel と同じ画面端の余白(24px)。 */
+  width: min(calc(100vw - 56px), 468px);
+  /*
+   * ビーズは 24 色あり、列を減らすと縦に伸びすぎる。画面の高さの 4 割を上限に
+   * 縦スクロールさせる。touch-action: pan-y は、ページ全体のピンチ操作を止めている
+   * 中でもこの中だけは縦スワイプを許可するために要る(pointerdown 等ではなく
+   * ネイティブスクロールなので、明示しないと親側の抑止に巻き込まれる)。
+   * スクロールバーは他の行と同じ作法(.hscroll-track)で隠す。
+   */
+  max-height: 40vh;
+  overflow-y: auto;
+  touch-action: pan-y;
+  scrollbar-width: none;
+}
+
+.swatches::-webkit-scrollbar {
+  display: none;
 }
 
 /* パレットは 2 組(クレヨン / ビーズ)を持ち、下敷きに応じて出し分ける。 */
 .bead-swatches {
   display: none;
-  grid-template-columns: repeat(6, 56px);
+  grid-template-columns: repeat(auto-fill, 56px);
   gap: 10px;
+  /* 386px = 元々の(6 列時の)ビーズ格子の幅(56px×6+10px×5)。 */
+  width: min(calc(100vw - 56px), 386px);
 }
 
 .color-panel.is-beads .crayon-swatches {
