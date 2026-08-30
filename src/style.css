@@ -683,8 +683,23 @@ ruby > rt {
   grid-template-columns: repeat(auto-fill, 68px);
   gap: 12px;
   justify-content: center;
-  /* 56px = パネルの左右 padding(16px×2) + .grid-panel と同じ画面端の余白(24px)。 */
-  width: min(calc(100vw - 56px), 468px);
+  /*
+   * 色見本(.swatch)は選択中に box-shadow で輪が外側 5px まではみ出す
+   * (通常時も枠線ぶんの外郭が 2px)。overflow-y: auto の切り取り境界に
+   * 中身がぴったりだと、その装飾だけが上下左右で切れる。padding で
+   * 切り取り境界の内側に余白(8px > 5px)を確保し、はみ出しごと収める。
+   * box-sizing: border-box(全称セレクタ)なので、この padding は
+   * width/max-height の中に含まれる = 余白を足した分だけ実際に置ける
+   * 面積が減る形になる(狙いどおり)。
+   */
+  padding: 8px;
+  /*
+   * 468px = 元々の(6 列時の)格子の幅。padding 8px×2 を足しても中身の
+   * 格子幅がそのまま 468px に収まるよう、width 側にも 16px 足しておく
+   * (min(a,b)+16 = min(a+16, b+16) なので、vw 側の余白も 56px→40px に
+   * 縮めて帳尻を合わせている)。
+   */
+  width: min(calc(100vw - 40px), 484px);
   /*
    * ビーズは 24 色あり、列を減らすと縦に伸びすぎる。画面の高さの 4 割を上限に
    * 縦スクロールさせる。touch-action: pan-y は、ページ全体のピンチ操作を止めている
@@ -707,8 +722,11 @@ ruby > rt {
   display: none;
   grid-template-columns: repeat(auto-fill, 56px);
   gap: 10px;
-  /* 386px = 元々の(6 列時の)ビーズ格子の幅(56px×6+10px×5)。 */
-  width: min(calc(100vw - 56px), 386px);
+  /*
+   * 386px = 元々の(6 列時の)ビーズ格子の幅(56px×6+10px×5)。.swatches の
+   * padding: 8px ぶん(上下左右合計 16px)を足して、格子の実寸は変えない。
+   */
+  width: min(calc(100vw - 40px), 402px);
 }
 
 .color-panel.is-beads .crayon-swatches {
