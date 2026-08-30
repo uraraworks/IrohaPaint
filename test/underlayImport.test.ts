@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { fitSize } from "../src/core/underlay.ts";
 import {
   chooseEncoding,
   isSupportedImageType,
   MAX_IMPORT_BYTES,
+  UNDERLAY_THUMB_EDGE,
   UnderlayImportError,
   validateFile,
 } from "../src/core/underlayImport.ts";
@@ -54,5 +56,17 @@ describe("validateFile", () => {
 
   it("種類・サイズが正常なら投げない", () => {
     expect(() => validateFile({ type: "image/png", size: MAX_IMPORT_BYTES })).not.toThrow();
+  });
+});
+
+describe("UNDERLAY_THUMB_EDGE", () => {
+  it("fitSize に渡すとサムネイルの寸法(長辺 UNDERLAY_THUMB_EDGE)になる", () => {
+    const result = fitSize(4096, 2048, UNDERLAY_THUMB_EDGE);
+    expect(result.width).toBe(UNDERLAY_THUMB_EDGE);
+    expect(result.height).toBe(128);
+  });
+
+  it("元が小さければ縮小しない(fitSize の既定動作をそのまま使う)", () => {
+    expect(fitSize(100, 50, UNDERLAY_THUMB_EDGE)).toEqual({ width: 100, height: 50 });
   });
 });

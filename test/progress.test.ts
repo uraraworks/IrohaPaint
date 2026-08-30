@@ -21,6 +21,7 @@ describe("進捗の保存", () => {
       strokeCount: 17,
       currentWorkId: "work-1",
       gridMode: "beads",
+      underlayId: "under-1",
       nib: "gpen",
       multiDraw: true,
     });
@@ -29,8 +30,23 @@ describe("進捗の保存", () => {
     expect(progress.strokeCount).toBe(17);
     expect(progress.currentWorkId).toBe("work-1");
     expect(progress.gridMode).toBe("beads");
+    expect(progress.underlayId).toBe("under-1");
     expect(progress.nib).toBe("gpen");
     expect(progress.multiDraw).toBe(true);
+  });
+
+  it("下敷きが無ければ underlayId は null のまま", () => {
+    installStorage();
+    saveProgress({
+      ownedTools: [...INITIAL_TOOLS],
+      strokeCount: 0,
+      currentWorkId: null,
+      gridMode: "off",
+      underlayId: null,
+      nib: "crayon",
+      multiDraw: false,
+    });
+    expect(loadProgress().underlayId).toBeNull();
   });
 
   it("保存データが壊れていても初期道具は必ず揃う", () => {
@@ -57,6 +73,7 @@ describe("進捗の保存", () => {
         strokeCount: 0,
         currentWorkId: null,
         gridMode: "off",
+        underlayId: null,
         nib: "crayon",
         multiDraw: false,
       }),

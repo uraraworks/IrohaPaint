@@ -4,7 +4,7 @@
 // 1 つのサブメニューにまとめる。将来のドット絵モードもここへ足す。
 import type { LabelPart } from "./tools.ts";
 
-export type GridMode = "off" | "grid" | "beads";
+export type GridMode = "off" | "grid" | "beads" | "photo";
 
 export interface GridModeDef {
   id: GridMode;
@@ -52,9 +52,23 @@ export const GRID_MODES: Readonly<Record<GridMode, GridModeDef>> = {
     </svg>`,
     snap: true,
   },
+  // 取り込んだ写真を下敷きにして、その上からなぞって描く。
+  // マス目と違って自由な太さ・ペン先のまま描けるので snap は false。
+  photo: {
+    id: "photo",
+    label: [{ base: "写真", ruby: "しゃしん" }],
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="5" y="5" width="22" height="22" rx="3" fill="#fffdf7" stroke="#3d3730"
+        stroke-width="2"/>
+      <circle cx="20" cy="12" r="3" fill="#f3c64b" stroke="#3d3730" stroke-width="1.6"/>
+      <path d="M7 23L13 15L17 19L21 13L26 23Z" fill="#8cc152" stroke="#3d3730" stroke-width="2"
+        stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>`,
+    snap: false,
+  },
 };
 
-export const GRID_MODE_ORDER: readonly GridMode[] = ["off", "grid", "beads"];
+export const GRID_MODE_ORDER: readonly GridMode[] = ["off", "grid", "beads", "photo"];
 
 export function isGridMode(value: unknown): value is GridMode {
   return typeof value === "string" && value in GRID_MODES;

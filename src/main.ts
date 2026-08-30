@@ -12,12 +12,17 @@ import { NIB_DEFS, NIB_ORDER, type NibId } from "./core/brush.ts";
 import { GRID_MODES, GRID_MODE_ORDER, type GridMode } from "./core/grid.ts";
 import {
   appendSnapshot,
+  CANVAS_HEIGHT,
+  CANVAS_WIDTH,
   createWork,
   snapshotOf,
   type SnapshotReason,
   type WorkRecord,
 } from "./core/model.ts";
 import { createWorkStore, requestPersistentStorage } from "./core/workStore.ts";
+import { MAX_UNDERLAYS, UNDERLAY_ALPHA, type UnderlayRecord } from "./core/underlay.ts";
+import { importUnderlay, UnderlayImportError, type UnderlayImportErrorCode } from "./core/underlayImport.ts";
+import { createUnderlayStore, pruneUnderlays, type UnderlayStore } from "./core/underlayStore.ts";
 import { hexToRgba, Surface } from "./core/surface.ts";
 import { installPointerInput, type PointerInputControl } from "./core/pointerInput.ts";
 import { clampView, IDENTITY, panBy, toCss, zoomAt, type ViewTransform } from "./core/viewport.ts";
@@ -45,6 +50,15 @@ import {
   toggleFullscreen,
 } from "./core/fullscreen.ts";
 
+/**
+ * 下敷きの帯にある「あたらしく取り込む」ボタンのプラス。
+ * icons.ts は他画面と共有なので変えず、この画面専用にここへ置く(規格だけ揃える: 32x32 / 線 #3d3730・太さ2)。
+ */
+const UNDERLAY_ADD_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <circle cx="16" cy="16" r="12" fill="#eaf4fc" stroke="#3d3730" stroke-width="2"/>
+  <path d="M16 10v12M10 16h12" stroke="#3d3730" stroke-width="2.6" stroke-linecap="round"/>
+</svg>`;
+
 /** 描き終わってから保存するまでの待ち時間。描画中に保存すると重い。 */
 const AUTOSAVE_DELAY_MS = 800;
 /** 履歴(まえにもどす)を積む間隔。 */
@@ -57,6 +71,12 @@ class App {
   private readonly stage: HTMLElement;
   private readonly paperWrap: HTMLElement;
   private readonly gridLayer: HTMLElement;
+  /** 写真の下敷きを描く専用キャンバス。紙のキャンバスには一切描かない(理由は buildStage 参照)。 */
+  private readonly underlayCanvas: HTMLCanvasElement;
+  private readonly underlayCtx: CanvasRenderingContext2D | null;
+  /** 下敷き選択用の隠しファイル入力。DOM には置くが画面には出さない。 */
+  private readonly underlayInput: HTMLInputElement;
+  private readonly underlayStore: UnderlayStore = createUnderlayStore();
   private readonly toolbar: HTMLElement;
   private readonly toolbarBar: HTMLElement;
   private toolbarArrows: { left: HTMLElement; right: HTMLElement } | null = null;
@@ -73,8 +93,20 @@ class App {
   // 段が増えたので、既定は中央(10)。細い 2 段は拡大して描き込む用。
   private penSize = PEN_SIZES[2] ?? 10;
   private eraserSize = ERASER_SIZES[1] ?? 70;
-  /** 下敷き。なし / 方眼 / ビーズ。ビーズはマスにしか置けなくなる。 */
+  /** 下敷き。なし / 方眼 / ビーズ / 写真。ビーズはマスにしか置けなくなる。 */
   private gridMode: GridMode = "off";
+  /** 起動時に復元する下敷き ID(復元後は this.underlayRecord が正)。 */
+  private underlayId: string | null = null;
+  /** 選んでいる下敷き写真の実体。無ければ写真モードでも何も描かない。 */
+  private underlayRecord: UnderlayRecord | null = null;
+  /** デコード済みの下敷き画像。毎回の再描画でデコードし直さないよう保持する。 */
+  private underlayBitmap: ImageBitmap | null = null;
+  /** 取り込み中の二重実行を防ぐガード(数MBの写真のデコードは時間がかかる)。 */
+  private importingUnderlay = false;
+  /** マスのサブメニューの下に出す、取り込み済みの下敷きを選び直す帯。 */
+  private underlayStrip!: HTMLElement;
+  /** 帯のサムネイル用に発行した objectURL。作り直すたびに必ず revoke する(gallery.ts と同じ作法)。 */
+  private underlayThumbUrls: string[] = [];
   private nib: NibId = "crayon";
   private strokeCount = 0;
   private pendingUnlock: Unlock | null = null;
@@ -109,6 +141,7 @@ class App {
     this.strokeCount = progress.strokeCount;
     this.currentWorkId = progress.currentWorkId;
     this.gridMode = progress.gridMode;
+    this.underlayId = progress.underlayId;
     this.nib = progress.nib;
     this.multiDraw = progress.multiDraw;
 
@@ -116,14 +149,38 @@ class App {
     this.stage.className = "stage";
     const canvas = document.createElement("canvas");
     canvas.className = "paper";
-    // 方眼は「下敷き」なので絵とは別のレイヤーに置く。
-    // こうすると PNG 書き出し(キャンバスのみ)に線が入らない。
+    // 方眼・写真の下敷きは「もう1枚の別レイヤー」であって絵そのものではない。
+    // 紙のキャンバスには一切描かないので、こうすると PNG 書き出し(キャンバスのみ)にも
+    // 作品の保存データ(surface の中身)にも入らない。
     this.paperWrap = document.createElement("div");
     this.paperWrap.className = "paper-wrap";
     this.gridLayer = document.createElement("div");
     this.gridLayer.className = "grid-layer";
+    // 下敷き写真は placement がキャンバス座標系(1748x1181)なので、
+    // 実ピクセルも同じ大きさで作り CSS で紙と同じ大きさへ伸ばす(drawImage にそのまま渡せる)。
+    this.underlayCanvas = document.createElement("canvas");
+    this.underlayCanvas.className = "underlay-layer";
+    this.underlayCanvas.width = CANVAS_WIDTH;
+    this.underlayCanvas.height = CANVAS_HEIGHT;
+    this.underlayCtx = this.underlayCanvas.getContext("2d");
     this.paperWrap.append(canvas, this.gridLayer);
     this.stage.appendChild(this.paperWrap);
+
+    // 下敷き選択用の隠しファイル入力。写真を選ぶたびに開き直すのではなく、
+    // 常に 1 つだけ用意して使い回す。
+    this.underlayInput = document.createElement("input");
+    this.underlayInput.type = "file";
+    this.underlayInput.accept = "image/*";
+    this.underlayInput.hidden = true;
+    document.body.appendChild(this.underlayInput);
+    this.underlayInput.addEventListener("change", () => {
+      const file = this.underlayInput.files?.[0] ?? null;
+      // 同じファイルを続けて選び直せるよう毎回リセットする。
+      this.underlayInput.value = "";
+      // 選ばずに閉じられた場合は file が null になる。この時点ではまだ
+      // gridMode を "photo" にしていないので、何もしなければ自然に元のモードのまま残る。
+      if (file !== null) void this.importUnderlayFile(file);
+    });
 
     this.toolbar = document.createElement("div");
     this.toolbar.className = "toolbar";
@@ -137,6 +194,9 @@ class App {
     this.surface = new Surface(canvas);
     // 描いている最中の末尾を映す層(surface.ts の overlay)。方眼より下に敷く。
     this.paperWrap.insertBefore(this.surface.overlay, this.gridLayer);
+    // 重なり順: 紙 → 仮インク(overlay) → 下敷き写真 → 方眼。方眼はマス目の目安なので
+    // 常に一番上に見えていてほしい。
+    this.paperWrap.insertBefore(this.underlayCanvas, this.gridLayer);
     this.guide = new GuideBubble(document.body);
 
     this.buildToolbarScroll();
@@ -164,6 +224,7 @@ class App {
       }
     });
     void this.restore();
+    void this.restoreUnderlay();
     // 作品が勝手に消えないよう永続化を頼んでおく(結果は待たない)。
     void requestPersistentStorage();
   }
@@ -247,13 +308,37 @@ class App {
       button.append(icon, label);
       button.setAttribute("aria-label", plainText(def.label));
       button.addEventListener("click", () => {
+        panel.close();
+        if (id === "photo") {
+          // 写真だけは特別扱い。下敷きが無ければまずファイルを選ばせる
+          // (選ばれるまでは gridMode を変えないので、キャンセルされても
+          // 「写真モードなのに何も無い」状態にはならない)。
+          this.chooseUnderlay();
+          return;
+        }
         this.setGridMode(id);
         this.sound.play(id === "off" ? "shu" : "poko");
-        panel.close();
       });
       panel.element.appendChild(button);
     }
+    // 写真が選ばれている間だけ、取り込み済みの下敷きを選び直す帯を出す(refreshUnderlayStrip で中身を作る)。
+    // パネルの flex-wrap を利用して独立した 1 行にするため CSS 側で flex-basis: 100% にしてある。
+    this.underlayStrip = document.createElement("div");
+    this.underlayStrip.className = "underlay-strip";
+    panel.element.appendChild(this.underlayStrip);
     return panel;
+  }
+
+  /** 「マス」から写真を選んだときの入口。 */
+  private chooseUnderlay(): void {
+    if (this.underlayRecord !== null) {
+      // 既に取り込みがあれば、まず今選んでいるものをそのまま表示する。
+      // 選び直しは写真モードの下に出る帯(underlay-strip)から行う。
+      this.setGridMode("photo");
+      this.sound.play("poko");
+      return;
+    }
+    this.underlayInput.click();
   }
 
   private createNibRow(): HTMLElement {
@@ -668,8 +753,12 @@ class App {
 
   private syncGridButtons(): void {
     this.colorPanel.element.classList.toggle("is-beads", this.snapToCells);
-    this.gridLayer.classList.toggle("is-on", this.gridMode !== "off");
+    // マス目の線は grid / beads だけの絵柄。photo は underlayCanvas 側で見せるので、
+    // ここでは重ねない(重ねると写真の上に無関係な線が乗ってしまう)。
+    this.gridLayer.classList.toggle("is-on", this.gridMode === "grid" || this.gridMode === "beads");
     this.gridLayer.classList.toggle("is-beads", this.gridMode === "beads");
+    // 写真の下敷きは、下敷きが実際にあるときだけ見せる。
+    this.underlayCanvas.classList.toggle("is-on", this.gridMode === "photo" && this.underlayRecord !== null);
     // ツールバーのボタンには、いま選んでいる下敷きの絵を出す。
     const button = this.buttons.get("grid");
     button?.classList.toggle("is-active", this.gridMode !== "off");
@@ -678,6 +767,144 @@ class App {
     for (const element of this.gridPanel.element.querySelectorAll<HTMLElement>(".nib-button")) {
       element.classList.toggle("is-active", element.dataset.grid === this.gridMode);
     }
+    // gridMode が変わるたびに帯の表示・非表示も追従させる(ここが唯一の入口)。
+    void this.refreshUnderlayStrip();
+  }
+
+  // --- 写真の下敷き -------------------------------------------------------
+
+  /**
+   * 選ばれたファイルを下敷きへ取り込む。
+   * 取り込み(デコード+縮小)は数MBの写真だと時間がかかるので、二重実行はガードする。
+   */
+  private async importUnderlayFile(file: File): Promise<void> {
+    if (this.importingUnderlay) return;
+    this.importingUnderlay = true;
+    try {
+      const record = await importUnderlay(file, Date.now());
+      await this.underlayStore.put(record);
+      await this.applyUnderlay(record);
+      // 上限を超えたぶんを黙って押し出す(画面には出さない。下敷きは取り込み直せるので知らせる必要がない)。
+      // 今取り込んだものは createUnderlay() で lastUsedAt が now になっているので押し出されない。
+      await pruneUnderlays(this.underlayStore, MAX_UNDERLAYS);
+      // 取り込みが成功して初めて写真モードへ入る(失敗時は元のモードのまま)。setGridMode の中で
+      // 帯も作り直される(プルーニング後の一覧を反映させたいので、ここより前ではなく後で呼ぶ)。
+      this.setGridMode("photo");
+      this.sound.play("poko");
+    } catch (error) {
+      const code = error instanceof UnderlayImportError ? error.code : null;
+      const anchor = this.buttons.get("grid") ?? this.gridPanel.element;
+      this.guide.show(underlayErrorMessage(code), anchor);
+      if (!(error instanceof UnderlayImportError)) console.warn("したじきの取り込みに失敗しました", error);
+    } finally {
+      this.importingUnderlay = false;
+    }
+  }
+
+  /** 下敷きレコードをデコードして描画状態に反映する。差し替え時は古いビットマップを閉じる。 */
+  private async applyUnderlay(record: UnderlayRecord): Promise<void> {
+    const bitmap = await createImageBitmap(record.image);
+    this.underlayBitmap?.close();
+    this.underlayBitmap = bitmap;
+    this.underlayRecord = record;
+    this.drawUnderlay();
+  }
+
+  /** underlayCanvas への実際の描画。placement はキャンバス座標系なのでそのまま渡せる。 */
+  private drawUnderlay(): void {
+    if (this.underlayCtx === null) return;
+    this.underlayCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    if (this.underlayRecord === null || this.underlayBitmap === null) return;
+    const { placement, opacity, width, height } = this.underlayRecord;
+    // 濃さは canvas に描き込まず CSS の opacity で載せる(差し替えのたびに再エンコードしなくて済む)。
+    this.underlayCanvas.style.opacity = String(UNDERLAY_ALPHA[opacity]);
+    this.underlayCtx.drawImage(this.underlayBitmap, placement.tx, placement.ty, width * placement.scale, height * placement.scale);
+  }
+
+  /**
+   * 帯のサムネイルを押したときの選び直し。切り替えて描き直し、押し出しの基準になる
+   * lastUsedAt を更新して保存する。メニューは閉じない(見比べて選べるように)。
+   */
+  private async selectUnderlay(record: UnderlayRecord): Promise<void> {
+    const updated: UnderlayRecord = { ...record, lastUsedAt: Date.now() };
+    await this.underlayStore.put(updated);
+    await this.applyUnderlay(updated);
+    this.persistProgress();
+    this.sound.play("poko");
+    void this.refreshUnderlayStrip();
+  }
+
+  /**
+   * 帯の中身を作り直す。gridMode が "photo" のときだけ store から一覧を取り直し、
+   * それ以外では空にして隠す(syncGridButtons から常に呼ばれる)。
+   */
+  private async refreshUnderlayStrip(): Promise<void> {
+    const records = this.gridMode === "photo" ? await this.underlayStore.list() : [];
+    this.renderUnderlayStrip(records);
+    // 帯の行が増減してパネルの高さが変わるので、開いていれば位置を計算し直す。
+    if (this.gridPanel.isOpen) {
+      const anchor = this.buttons.get("grid");
+      if (anchor !== undefined) this.gridPanel.open(anchor);
+    }
+  }
+
+  /**
+   * 帯の DOM を作り直す。
+   * 並びは records の順(= store.list() の createdAt 新しい順)のまま使う。lastUsedAt 順にすると
+   * 使うたびに並びが変わって探せなくなるため、並び順は取り込んだ順で固定する。
+   */
+  private renderUnderlayStrip(records: readonly UnderlayRecord[]): void {
+    // 古い objectURL を握ったままにしない(写真ぶんメモリが積み上がる。gallery.ts と同じ作法)。
+    for (const url of this.underlayThumbUrls) URL.revokeObjectURL(url);
+    this.underlayThumbUrls = [];
+    this.underlayStrip.textContent = "";
+    this.underlayStrip.classList.toggle("is-visible", this.gridMode === "photo");
+    if (this.gridMode !== "photo") return;
+
+    // 先頭に「＋」。何枚溜まってもスクロールせずに指が届く位置に置く。
+    const add = document.createElement("button");
+    add.className = "underlay-add";
+    add.innerHTML = UNDERLAY_ADD_SVG;
+    add.setAttribute("aria-label", "しゃしんをふやす");
+    add.addEventListener("click", () => this.underlayInput.click());
+    this.underlayStrip.appendChild(add);
+
+    for (const record of records) {
+      const button = document.createElement("button");
+      button.className = "underlay-thumb";
+      button.classList.toggle("is-active", record.id === this.underlayRecord?.id);
+      button.setAttribute("aria-label", "したじきをえらぶ");
+      const url = URL.createObjectURL(record.thumbnail);
+      this.underlayThumbUrls.push(url);
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = "";
+      button.appendChild(img);
+      button.addEventListener("click", () => void this.selectUnderlay(record));
+      this.underlayStrip.appendChild(button);
+    }
+  }
+
+  /**
+   * 起動時の復元。gridMode が "photo" のときだけ underlayStore から読み直す。
+   * レコードが見つからなくても起動自体は失敗させず、静かに "off" へ落とす。
+   */
+  private async restoreUnderlay(): Promise<void> {
+    if (this.gridMode !== "photo") return;
+    try {
+      const record = this.underlayId === null ? null : await this.underlayStore.get(this.underlayId);
+      if (record === null) {
+        this.gridMode = "off";
+        this.persistProgress();
+      } else {
+        await this.applyUnderlay(record);
+      }
+    } catch (error) {
+      console.warn("したじきの復元に失敗しました", error);
+      this.gridMode = "off";
+      this.persistProgress();
+    }
+    this.syncGridButtons();
   }
 
   private syncActive(): void {
@@ -906,6 +1133,7 @@ class App {
       strokeCount: this.strokeCount,
       currentWorkId: this.work?.id ?? null,
       gridMode: this.gridMode,
+      underlayId: this.underlayRecord?.id ?? null,
       nib: this.nib,
       multiDraw: this.multiDraw,
     });
@@ -1130,6 +1358,24 @@ function rgbEquals(styleColor: string, hex: string): boolean {
   if (match === null) return styleColor.toLowerCase() === hex.toLowerCase();
   const toHex = (value: string): string => Number(value).toString(16).padStart(2, "0");
   return `#${toHex(match[1] ?? "0")}${toHex(match[2] ?? "0")}${toHex(match[3] ?? "0")}` === hex.toLowerCase();
+}
+
+/**
+ * 下敷きの取り込み失敗を子ども向けの短い文言にする。
+ * core 側(underlayImport.ts)は code しか持たないので、文言を決めるのはこの UI 層の責任。
+ */
+function underlayErrorMessage(code: UnderlayImportErrorCode | null): string {
+  switch (code) {
+    case "unsupportedType":
+      return "これは ひらけません";
+    case "tooLarge":
+      return "おおきすぎます";
+    case "decodeFailed":
+    case "encodeFailed":
+      return "よみこめませんでした";
+    default:
+      return "よみこめませんでした";
+  }
 }
 
 const version = document.getElementById("app-version");

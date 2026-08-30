@@ -15,8 +15,10 @@ export interface Progress {
   strokeCount: number;
   /** いま開いている作品。次に起動したときも同じ絵の続きから描けるようにする。 */
   currentWorkId: string | null;
-  /** 下敷き(なし / 方眼 / ビーズ)。作品ではなく人に属する設定。 */
+  /** 下敷き(なし / 方眼 / ビーズ / 写真)。作品ではなく人に属する設定。 */
   gridMode: GridMode;
+  /** 下敷きに選んでいる写真の id(underlayStore のキー)。gridMode が "photo" のときだけ意味を持つ。 */
+  underlayId: string | null;
   /** 選んでいるペン先。 */
   nib: NibId;
   /** 「みんなで描く」モード。 */
@@ -29,6 +31,7 @@ export function loadProgress(): Progress {
     strokeCount: 0,
     currentWorkId: null,
     gridMode: "off",
+    underlayId: null,
     nib: "crayon",
     multiDraw: false,
   };
@@ -46,6 +49,7 @@ export function loadProgress(): Progress {
       strokeCount: typeof parsed.strokeCount === "number" && parsed.strokeCount >= 0 ? parsed.strokeCount : 0,
       currentWorkId: typeof parsed.currentWorkId === "string" ? parsed.currentWorkId : null,
       gridMode: isGridMode(parsed.gridMode) ? parsed.gridMode : "off",
+      underlayId: typeof parsed.underlayId === "string" ? parsed.underlayId : null,
       nib: isNibId(parsed.nib) ? parsed.nib : "crayon",
       multiDraw: parsed.multiDraw === true,
     };

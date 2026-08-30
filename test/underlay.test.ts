@@ -6,14 +6,17 @@ import {
   DEFAULT_UNDERLAY_OPACITY,
   fitPlacement,
   fitSize,
+  MAX_UNDERLAYS,
+  pickEvicted,
   scaleAt,
   UNDERLAY_MAX_EDGE,
   UNDERLAY_MAX_SCALE_RATIO,
   UNDERLAY_MIN_SCALE_RATIO,
 } from "../src/core/underlay.ts";
-import { MemoryUnderlayStore } from "../src/core/underlayStore.ts";
+import { MemoryUnderlayStore, pruneUnderlays } from "../src/core/underlayStore.ts";
 
 const dummy = { size: 1 } as unknown as Blob;
+const dummyThumb = { size: 1 } as unknown as Blob;
 
 describe("fitSize", () => {
   it("長辺が上限以下ならそのまま", () => {
@@ -121,7 +124,7 @@ describe("scaleAt", () => {
 
 describe("createUnderlay", () => {
   it("初期値は既定の濃さ・fitPlacement と一致する配置", () => {
-    const underlay = createUnderlay(dummy, 1000, 800, 1234);
+    const underlay = createUnderlay(dummy, 1000, 800, 1234, dummyThumb);
     expect(underlay.opacity).toBe(DEFAULT_UNDERLAY_OPACITY);
     expect(underlay.placement).toEqual(fitPlacement(1000, 800));
     expect(underlay.width).toBe(1000);
@@ -129,13 +132,53 @@ describe("createUnderlay", () => {
     expect(underlay.createdAt).toBe(1234);
     expect(underlay.id.startsWith("under-")).toBe(true);
   });
+
+  it("lastUsedAt は取り込んだ時刻(now)になる(取り込んだ直後は「今使った」ため)", () => {
+    const underlay = createUnderlay(dummy, 1000, 800, 1234, dummyThumb);
+    expect(underlay.lastUsedAt).toBe(1234);
+  });
+});
+
+describe("pickEvicted", () => {
+  it("上限以内なら空配列", () => {
+    const records = [
+      { id: "a", lastUsedAt: 1 },
+      { id: "b", lastUsedAt: 2 },
+    ];
+    expect(pickEvicted(records, 2)).toEqual([]);
+    expect(pickEvicted(records, 10)).toEqual([]);
+  });
+
+  it("上限を超えたぶんだけ lastUsedAt の古い順に返す", () => {
+    const records = [
+      { id: "a", lastUsedAt: 30 },
+      { id: "b", lastUsedAt: 10 },
+      { id: "c", lastUsedAt: 20 },
+    ];
+    expect(pickEvicted(records, 2)).toEqual(["b"]);
+    expect(pickEvicted(records, 1)).toEqual(["b", "c"]);
+  });
+
+  it("既定値は MAX_UNDERLAYS", () => {
+    const records = Array.from({ length: MAX_UNDERLAYS + 2 }, (_, i) => ({ id: `id${i}`, lastUsedAt: i }));
+    expect(pickEvicted(records)).toEqual(["id0", "id1"]);
+  });
+
+  it("lastUsedAt が同点なら id 順で決着させ、結果が揺れないようにする", () => {
+    const records = [
+      { id: "b", lastUsedAt: 10 },
+      { id: "a", lastUsedAt: 10 },
+      { id: "c", lastUsedAt: 10 },
+    ];
+    expect(pickEvicted(records, 1)).toEqual(["a", "b"]);
+  });
 });
 
 describe("MemoryUnderlayStore", () => {
   it("put/list は createdAt の新しい順で全件返す", async () => {
     const store = new MemoryUnderlayStore();
-    const older = createUnderlay(dummy, 100, 100, 10);
-    const newer = createUnderlay(dummy, 100, 100, 20);
+    const older = createUnderlay(dummy, 100, 100, 10, dummyThumb);
+    const newer = createUnderlay(dummy, 100, 100, 20, dummyThumb);
     await store.put(older);
     await store.put(newer);
     expect((await store.list()).map((u) => u.id)).toEqual([newer.id, older.id]);
@@ -143,7 +186,7 @@ describe("MemoryUnderlayStore", () => {
 
   it("remove すると一覧からも get からも消える", async () => {
     const store = new MemoryUnderlayStore();
-    const underlay = createUnderlay(dummy, 100, 100, 10);
+    const underlay = createUnderlay(dummy, 100, 100, 10, dummyThumb);
     await store.put(underlay);
 
     expect(await store.remove(underlay.id)).toBe(true);
@@ -153,5 +196,32 @@ describe("MemoryUnderlayStore", () => {
 
   it("知らない ID なら false を返すだけ(落とさない)", async () => {
     expect(await new MemoryUnderlayStore().remove("nope")).toBe(false);
+  });
+});
+
+describe("pruneUnderlays", () => {
+  it("上限まで減り、残るのは lastUsedAt の新しい側", async () => {
+    const store = new MemoryUnderlayStore();
+    const max = 3;
+    const records = Array.from({ length: max + 2 }, (_, i) => createUnderlay(dummy, 100, 100, i, dummyThumb));
+    for (const record of records) {
+      await store.put(record);
+    }
+
+    const prunedCount = await pruneUnderlays(store, max);
+    expect(prunedCount).toBe(2);
+
+    const remaining = await store.list();
+    expect(remaining).toHaveLength(max);
+    // createdAt(=lastUsedAt の初期値)が新しい 3 件だけ残る。
+    const remainingCreatedAt = remaining.map((r) => r.createdAt).sort((a, b) => a - b);
+    expect(remainingCreatedAt).toEqual([2, 3, 4]);
+  });
+
+  it("上限以内なら何も消さない", async () => {
+    const store = new MemoryUnderlayStore();
+    await store.put(createUnderlay(dummy, 100, 100, 1, dummyThumb));
+    expect(await pruneUnderlays(store, 5)).toBe(0);
+    expect(await store.list()).toHaveLength(1);
   });
 });

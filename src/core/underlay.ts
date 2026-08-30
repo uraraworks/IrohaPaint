@@ -38,6 +38,10 @@ export interface UnderlayRecord {
   height: number;
   placement: UnderlayPlacement;
   opacity: UnderlayOpacity;
+  /** 最後に下敷きとして選ばれた時刻(epoch ミリ秒)。古いものから押し出すときの基準。 */
+  lastUsedAt: number;
+  /** 一覧に並べる小さい画像。原寸(長辺2048)を何枚も並べると一覧を開くだけで数十MB動くため。 */
+  thumbnail: Blob;
 }
 
 /**
@@ -141,7 +145,13 @@ export function scaleAt(
   return clampPlacement({ scale, tx, ty }, width, height);
 }
 
-export function createUnderlay(image: Blob, width: number, height: number, now: number): UnderlayRecord {
+export function createUnderlay(
+  image: Blob,
+  width: number,
+  height: number,
+  now: number,
+  thumbnail: Blob,
+): UnderlayRecord {
   return {
     id: createId("under"),
     createdAt: now,
@@ -150,8 +160,39 @@ export function createUnderlay(image: Blob, width: number, height: number, now: 
     height,
     placement: fitPlacement(width, height),
     opacity: DEFAULT_UNDERLAY_OPACITY,
+    // 取り込んだ直後は「今使った」ので lastUsedAt も now にする。
+    lastUsedAt: now,
+    thumbnail,
   };
 }
 
-/** スキーマ変更時に上げる。model.ts の SCHEMA_VERSION とは別に独立して上げられるようにする。 */
-export const UNDERLAY_SCHEMA_VERSION = 1;
+/**
+ * 端末に置いておく下敷きの上限。写真1枚が数MBあるため、無制限に溜めると容量を圧迫する。
+ * 下敷きは自分で描いたものではなく元ファイルが手元に残っているので、押し出されても
+ * 取り込み直せばよい ＝ 消す操作を画面に置かずに済む(誤って消す事故が起きない)。
+ */
+export const MAX_UNDERLAYS = 12;
+
+/** 上限を超えている分について、押し出す対象の id を lastUsedAt の古い順に返す。 */
+export function pickEvicted(
+  records: readonly { id: string; lastUsedAt: number }[],
+  max = MAX_UNDERLAYS,
+): string[] {
+  if (records.length <= max) return [];
+  // lastUsedAt 昇順(古い順)。同点は id で決着させ、並び替えのたびに結果が
+  // 揺れる(テストが不安定になる)のを防ぐ。
+  const sorted = [...records].sort((a, b) => {
+    if (a.lastUsedAt !== b.lastUsedAt) return a.lastUsedAt - b.lastUsedAt;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+  const evictCount = sorted.length - max;
+  return sorted.slice(0, evictCount).map((record) => record.id);
+}
+
+/**
+ * スキーマ変更時に上げる。model.ts の SCHEMA_VERSION とは別に独立して上げられるようにする。
+ * 1 → 2: lastUsedAt と thumbnail を必須で足したため、それ以前に保存されたレコードは形が合わない。
+ * 下敷きはまだ公開していない機能なので、古いレコードは読まずに捨ててよい(unwrap() が
+ * バージョン不一致として無視する)。
+ */
+export const UNDERLAY_SCHEMA_VERSION = 2;

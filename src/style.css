@@ -146,6 +146,22 @@ body {
   pointer-events: none;
 }
 
+/* 写真の下敷き。方眼と同じく「絵とは別レイヤー」= キャンバスには一切描かないので
+   PNG 書き出しにも作品の保存データにも入らない。方眼より下・仮インクより上に重ねる。 */
+.underlay-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  border-radius: 14px;
+  pointer-events: none;
+}
+
+.underlay-layer.is-on {
+  display: block;
+}
+
 .grid-layer {
   position: absolute;
   inset: 0;
@@ -527,9 +543,79 @@ ruby > rt {
   box-shadow: 0 0 0 5px var(--accent);
 }
 
-/* 下敷き(なし / 方眼 / ビーズ)を選ぶパネル。ペン先と同じ形のボタンを使う。 */
+/* 下敷き(なし / 方眼 / ビーズ / 写真)を選ぶパネル。ペン先と同じ形のボタンを使う。 */
 .grid-panel {
   gap: 12px;
+}
+
+/*
+ * 写真が選ばれている間だけ出る、取り込み済みの下敷きを選び直す帯。
+ * .panel は flex-wrap: wrap なので、なし/方眼/ビーズ/写真の 4 ボタンの下に
+ * 独立した 1 行として折り返させるため flex-basis: 100% にする。
+ * ツールバー(.toolbar)や履歴タイムライン(.gallery-grid.is-timeline)と同じく横スクロール。
+ */
+.underlay-strip {
+  display: none;
+  flex-basis: 100%;
+  align-items: center;
+  gap: 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+
+.underlay-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.underlay-strip.is-visible {
+  display: flex;
+}
+
+/* ヒット領域は指基準。88px 角(設計の芯)を確保する。 */
+.underlay-add,
+.underlay-thumb {
+  flex: none;
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  border: 3px solid transparent;
+  border-radius: 16px;
+  background: #f7f3ec;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.underlay-add:active,
+.underlay-thumb:active {
+  transform: scale(0.9);
+}
+
+.underlay-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.underlay-add svg {
+  width: 34px;
+  height: 34px;
+}
+
+.underlay-thumb {
+  overflow: hidden;
+}
+
+.underlay-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* 今表示している下敷きには、他のボタンと同じ is-active の見た目を付ける。 */
+.underlay-thumb.is-active {
+  border-color: var(--accent);
 }
 
 /* ペン先(クレヨン / Ｇペン / 筆)。太さの段の上に置く。 */

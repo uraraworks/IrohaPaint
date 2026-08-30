@@ -11,7 +11,7 @@
 // 作品は子どもが描いたものそのものだが、下敷きは取り込んだ画像の複製に過ぎず、
 // 元ファイルは手元に残っているので消したければ取り込み直せばよい。むしろ写真は
 // 数 MB あるため、消したつもりのものが残り続けると端末の容量を圧迫する。
-import { type UnderlayRecord, UNDERLAY_SCHEMA_VERSION } from "./underlay.ts";
+import { MAX_UNDERLAYS, pickEvicted, type UnderlayRecord, UNDERLAY_SCHEMA_VERSION } from "./underlay.ts";
 
 export interface StoredEnvelope {
   version: number;
@@ -99,15 +99,52 @@ export class IndexedDbUnderlayStore implements UnderlayStore {
 
   async list(): Promise<UnderlayRecord[]> {
     const db = await openDb();
+    let rows: unknown[];
+    let keys: IDBValidKey[];
     try {
       const tx = db.transaction(STORE_NAME, "readonly");
-      const rows = await promisify(tx.objectStore(STORE_NAME).getAll());
-      return rows
-        .map(unwrap)
-        .filter((underlay): underlay is UnderlayRecord => underlay !== null)
-        .sort((a, b) => b.createdAt - a.createdAt);
+      const store = tx.objectStore(STORE_NAME);
+      // getAll/getAllKeys は同じ順序で対応する(IndexedDB の仕様上、両方ともキー順)。
+      [rows, keys] = await Promise.all([promisify(store.getAll()), promisify(store.getAllKeys())]);
     } finally {
       db.close();
+    }
+
+    // 読めなくなった(スキーマバージョン不一致・壊れた)行はここで後始末として削除する。
+    // 下敷きは取り込み直せるので、読めなくなったものは捨ててよい。作品は子どもの絵なので、
+    // 読めないレコードでも消してはいけない(workStore.ts が unwrap で無視するだけに留めているのはそのため)。
+    // 削除は一覧取得の本題ではないので、読み取り結果には影響させず、失敗しても無視する。
+    const orphanKeys = keys.filter((_, i) => unwrap(rows[i]) === null);
+    if (orphanKeys.length > 0) {
+      void this.deleteOrphans(orphanKeys);
+    }
+
+    return rows
+      .map(unwrap)
+      .filter((underlay): underlay is UnderlayRecord => underlay !== null)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /** list() の後始末。読み取りとは別の readwrite transaction で行い、失敗しても握りつぶす。 */
+  private async deleteOrphans(keys: IDBValidKey[]): Promise<void> {
+    try {
+      const db = await openDb();
+      try {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        for (const key of keys) {
+          store.delete(key);
+        }
+        await new Promise<void>((resolve, reject) => {
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+          tx.onabort = () => reject(tx.error);
+        });
+      } finally {
+        db.close();
+      }
+    } catch {
+      // 後始末の失敗は無視する。次回の list() でまた掃除を試みる。
     }
   }
 
@@ -139,4 +176,18 @@ export class IndexedDbUnderlayStore implements UnderlayStore {
 export function createUnderlayStore(): UnderlayStore {
   if (typeof indexedDB === "undefined") return new MemoryUnderlayStore();
   return new IndexedDbUnderlayStore();
+}
+
+/**
+ * 上限を超えたぶんを古い順に本当に消す。消した件数を返す。
+ * IndexedDbUnderlayStore / MemoryUnderlayStore どちらでも同じロジックで使えるよう、
+ * UnderlayStore インターフェース(list/remove)だけに依存する自由関数にしてある。
+ */
+export async function pruneUnderlays(store: UnderlayStore, max = MAX_UNDERLAYS): Promise<number> {
+  const records = await store.list();
+  const evicted = pickEvicted(records, max);
+  for (const id of evicted) {
+    await store.remove(id);
+  }
+  return evicted.length;
 }

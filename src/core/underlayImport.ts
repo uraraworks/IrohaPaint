@@ -9,6 +9,9 @@ import { createUnderlay, fitSize, type UnderlayRecord } from "./underlay.ts";
 /** 取り込めるファイルサイズの上限。これを超えるとデコードでタブが固まりうる。 */
 export const MAX_IMPORT_BYTES = 40 * 1024 * 1024;
 
+/** 一覧のカードに出すサムネイルの長辺。ここも fitSize() で寸法を出せる。 */
+export const UNDERLAY_THUMB_EDGE = 256;
+
 const SUPPORTED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
 /** 取り込める画像の種類か(GIF はアニメーションでも 1 コマ目が使われる)。 */
@@ -77,7 +80,14 @@ export async function importUnderlay(file: File, now: number): Promise<UnderlayR
   try {
     const size = fitSize(bitmap.width, bitmap.height);
     const blob = await encodeToBlob(bitmap, size.width, size.height, chooseEncoding(file.type));
-    return createUnderlay(blob, size.width, size.height, now);
+    // サムネイルも同じ ImageBitmap から作る(デコードは 1 回だけにする。数MBの写真を2回デコードしない)。
+    // 一覧に並ぶ小さい絵に透過は要らないので、常に JPEG(白背景)にしてサイズを削る。
+    const thumbSize = fitSize(bitmap.width, bitmap.height, UNDERLAY_THUMB_EDGE);
+    const thumbnail = await encodeToBlob(bitmap, thumbSize.width, thumbSize.height, {
+      type: "image/jpeg",
+      quality: 0.7,
+    });
+    return createUnderlay(blob, size.width, size.height, now, thumbnail);
   } finally {
     // デコード済み画像は数十 MB を占めるので放置しない。
     bitmap.close();
