@@ -48,8 +48,6 @@ import { installHScroll, type HScrollArrows, type HScrollControl } from "./ui/hs
 import {
   CHEVRON_LEFT_SVG,
   CHEVRON_RIGHT_SVG,
-  EYE_OFF_SVG,
-  EYE_SVG,
   FILTER_DARK_SVG,
   FILTER_NIGHT_SVG,
   FILTER_NORMAL_SVG,
@@ -60,6 +58,7 @@ import {
   MOVE_SVG,
   SOUND_OFF_SVG,
   SOUND_ON_SVG,
+  withHiddenBadge,
 } from "./ui/icons.ts";
 import {
   isFullscreenActive,
@@ -188,9 +187,13 @@ class App {
   private placeLastPoint: { x: number; y: number } | null = null;
   private placeDoneButton: HTMLElement | null = null;
   /**
-   * なぞった線と下敷きの写真を見比べるための「かくす/みせる」トグル。状態は保存しない。
-   * 隠したまま次に開くと「写真モードなのに何も出ない」という原因の分からない状態になる。
-   * 状態は保存せず、起動時は必ず見えている側から始める。
+   * なぞった線と下敷き(方眼・ビーズ・写真)を見比べるための「かくす/みせる」トグル。状態は保存しない。
+   * 隠したまま次に開くと「下敷きモードなのに何も出ない」という原因の分からない状態になる。
+   * 状態は保存せず、起動時・下敷きの切り替え時は必ず見えている側から始める。
+   *
+   * 抜けるのは「なし」、覗くのは「かくす」。ビーズは升目に吸着する＝描き方が変わるモードなので、
+   * 抜けるには「なし」を選ぶ必要がある。かくすは一時的に見えなくするだけで、
+   * 隠している間も吸着は続く(完成形を確かめるための機能であって、抜けるための機能ではない)。
    */
   private underlayHiddenByUser = false;
   private underlayToggleButton: HTMLElement | null = null;
@@ -704,14 +707,13 @@ class App {
   }
 
   /**
-   * なぞった線と下敷きの写真を見比べるための「かくす/みせる」トグル。全画面・音ボタンと
-   * 同じ並び(紙の右上)に置く。写真の下敷きが実際に表示されているときだけ出す
+   * なぞった線と下敷き(方眼・ビーズ・写真)を見比べるための「かくす/みせる」トグル。全画面・音
+   * ボタンと同じ並び(紙の右上)に置く。下敷きが「なし」以外のときだけ出す
    * (置く操作中は動かしている対象を隠す意味が無いので、その間も出さない)。
    */
   private buildUnderlayToggle(): void {
     const button = document.createElement("button");
     button.className = "sound-toggle underlay-toggle";
-    button.innerHTML = EYE_SVG;
     button.setAttribute("aria-label", "かくす");
     button.addEventListener("click", () => {
       this.underlayHiddenByUser = !this.underlayHiddenByUser;
@@ -724,14 +726,23 @@ class App {
 
   /** 隠す/見せるボタンの表示・見た目・下敷き自体の表示/非表示を揃える。 */
   private syncUnderlayToggle(): void {
-    const visible = this.gridMode === "photo" && this.underlayRecord !== null && !this.placingUnderlay;
+    // 写真だけは実体(underlayRecord)が無いと隠しようがないので別条件。方眼・ビーズは
+    // gridMode がそのまま「置いてある」印になる。
+    const hasUnderlay = this.gridMode === "grid" || this.gridMode === "beads" ||
+      (this.gridMode === "photo" && this.underlayRecord !== null);
+    const visible = hasUnderlay && !this.placingUnderlay;
     this.underlayToggleButton?.classList.toggle("is-visible", visible);
     if (this.underlayToggleButton !== null) {
-      this.underlayToggleButton.innerHTML = this.underlayHiddenByUser ? EYE_OFF_SVG : EYE_SVG;
+      // ボタンのアイコンは「目」ではなく、今の下敷きそのもの(GRID_MODES 側の絵柄をそのまま使う)。
+      // 隠しているときは、音の ON/OFF と同じ作法で ✕ を重ねる。
+      const baseIcon = GRID_MODES[this.gridMode].iconSvg;
+      this.underlayToggleButton.innerHTML = this.underlayHiddenByUser ? withHiddenBadge(baseIcon) : baseIcon;
       this.underlayToggleButton.setAttribute("aria-label", this.underlayHiddenByUser ? "みせる" : "かくす");
     }
     // 濃さ・配置は underlayRecord 側の状態なので一切触らない。表示を止めるだけ。
     this.underlayCanvas.classList.toggle("is-hidden-by-user", this.underlayHiddenByUser);
+    // 方眼・ビーズの升目線も同じトグル 1 つで制御する(状態を 2 つに分けない)。
+    this.gridLayer.classList.toggle("is-hidden-by-user", this.underlayHiddenByUser);
   }
 
   /**
@@ -999,6 +1010,9 @@ class App {
    */
   private setGridMode(mode: GridMode): void {
     this.gridMode = mode;
+    // 下敷きを切り替えたら「かくす」は必ずリセットする。隠した状態は持ち越さない
+    // (別の下敷きを選んだら見えている状態から始める。保存もしない方針と揃える)。
+    this.underlayHiddenByUser = false;
     // ビーズへ入ったら、選んでいた色をいちばん近いビーズ色へ寄せる
     // (実物に無い色のまま描かせない)。
     if (GRID_MODES[mode].snap) {
@@ -1104,6 +1118,9 @@ class App {
     const updated: UnderlayRecord = { ...record, lastUsedAt: Date.now() };
     await this.underlayStore.put(updated);
     await this.applyUnderlay(updated);
+    // 別の写真を選んだら、隠していても見えている状態から始める(持ち越さない)。
+    this.underlayHiddenByUser = false;
+    this.syncUnderlayToggle();
     this.persistProgress();
     this.sound.play("poko");
     void this.refreshUnderlayStrip();

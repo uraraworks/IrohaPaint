@@ -90,20 +90,17 @@ export const MOVE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
   <path d="M16 4l-4 4M16 4l4 4M16 28l-4-4M16 28l4-4M4 16l4-4M4 16l4 4M28 16l-4-4M28 16l-4 4"/>
 </svg>`;
 
-/** 見えている(目)。下敷きを「かくす」ボタンの、今は見えている状態を表す。 */
-export const EYE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="#3d3730"
-  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 16s5-9 12-9 12 9 12 9-5 9-12 9-12-9-12-9z"/>
-  <circle cx="16" cy="16" r="4"/>
-</svg>`;
-
-/** 隠れている(目に斜線)。下敷きを「みせる」ボタンの、今は隠れている状態を表す。 */
-export const EYE_OFF_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="#3d3730"
-  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M4 16s5-9 12-9 12 9 12 9-5 9-12 9-12-9-12-9z"/>
-  <circle cx="16" cy="16" r="4"/>
-  <path d="M6 6l20 20"/>
-</svg>`;
+/**
+ * 「かくす」ボタンには目のアイコンではなく、今の下敷き(GRID_MODES[mode].iconSvg)そのものを
+ * 出す。隠しているときは、そのアイコンに ✕ を重ねる。SOUND_OFF_SVG(スピーカーはそのまま
+ * 残して斜め線を足す)と同じ作法で、✕ の線の太さ・色もそちらに揃える。
+ * 元のアイコンの `</svg>` の直前に差し込むだけなので、どの下敷きアイコンにも使い回せる。
+ */
+export function withHiddenBadge(iconSvg: string): string {
+  const badge = `<path d="M21 12.5l7 7M28 12.5l-7 7" fill="none" stroke="#3d3730" stroke-width="2"
+    stroke-linecap="round"/>`;
+  return iconSvg.replace("</svg>", `${badge}</svg>`);
+}
 
 /**
  * 画面フィルタ(目の負担を減らす表示)の切り替えボタン。太陽 → だんだん欠けていく太陽 → 月、で

@@ -219,6 +219,12 @@ body {
   display: block;
 }
 
+/* 「かくす」ボタンで止めた表示。underlay-layer 側の is-hidden-by-user と同じ作法
+   (吸着など描き方に関わる状態には一切触らず、見た目だけを止める)。 */
+.grid-layer.is-hidden-by-user {
+  display: none;
+}
+
 .confetti {
   position: absolute;
   inset: 0;
@@ -262,8 +268,8 @@ body {
   height: 32px;
 }
 
-/* なぞった線と下敷きの写真を見比べる「かくす/みせる」。
-   写真の下敷きが実際に表示されているときだけ出す(置く操作中も出さない)。 */
+/* なぞった線と下敷き(方眼・ビーズ・写真)を見比べる「かくす/みせる」。
+   下敷きが「なし」以外のときだけ出す(置く操作中も出さない)。 */
 .underlay-toggle {
   display: none;
 }
