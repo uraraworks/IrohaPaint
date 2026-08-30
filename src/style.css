@@ -146,6 +146,20 @@ body {
   pointer-events: none;
 }
 
+/* 下敷き選択用のファイル入力。hidden(=display:none)にすると iOS Safari が
+   プログラムからのクリックを受け付けなくなるため、画面から見えなくするだけに留める。 */
+.underlay-input {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+}
+
 /* 写真の下敷き。方眼と同じく「絵とは別レイヤー」= キャンバスには一切描かないので
    PNG 書き出しにも作品の保存データにも入らない。方眼より下・仮インクより上に重ねる。 */
 .underlay-layer {
@@ -708,12 +722,17 @@ ruby > rt {
  * どちらも中身は 3〜4 個の nib-button で、.underlay-strip / .underlay-opacity-row と
  * 同じ理由(.grid-panel の flex-wrap を使って独立した 1 行にする)で flex-basis: 100%
  * にする。紙とマスは互いに独立した軸なので、どちらの行も同時に選択状態を持てる。
+ *
+ * 押す大きさ(88px 基準)は縮めない。狭い画面では折り返して縦に伸ばす。
+ * 選べるものが増えても(紙にマンガ原稿用紙を足す等)同じ仕組みで収まる。
  */
 .paper-row,
 .grid-mode-row {
   display: flex;
+  flex-wrap: wrap;
   flex-basis: 100%;
   gap: 12px;
+  row-gap: 10px;
   justify-content: center;
 }
 
@@ -847,11 +866,16 @@ ruby > rt {
  * flex-wrap を使って独立した 1 行にする)で flex-basis: 100% にする。
  * ボタン自体はなし/方眼/ビーズ/写真の行と同じ nib-button を使い回すので、
  * 404px の幅上限にちょうど 4 個収まる(grid-panel のコメント参照)。
+ *
+ * 押す大きさ(88px 基準)は縮めない。狭い画面では折り返して縦に伸ばす。
+ * 選べるものが増えても(紙にマンガ原稿用紙を足す等)同じ仕組みで収まる。
  */
 .underlay-opacity-row {
   display: none;
+  flex-wrap: wrap;
   flex-basis: 100%;
   gap: 12px;
+  row-gap: 10px;
   justify-content: center;
 }
 

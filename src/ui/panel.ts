@@ -9,6 +9,15 @@ export class Panel {
     this.element = document.createElement("div");
     this.element.className = `panel ${className}`;
     parent.appendChild(this.element);
+
+    // 幅が確定するタイミングは一定ではない(帯の送りボタン等で後から増えることがあり、
+    // ビューポート側の変化がブラウザの計測に反映されるタイミングも一定でない)。
+    // rAF 決め打ちで1回だけ置き直すより、実際にサイズが変わった瞬間を捉えて
+    // そのつどクランプし直すほうが確実。position() は left/top/bottom しか
+    // 書き換えないため ResizeObserver を再度起こすことはなく、ループしない。
+    new ResizeObserver(() => {
+      if (this.isOpen && this.anchor !== null) this.position(this.anchor);
+    }).observe(this.element);
   }
 
   get isOpen(): boolean {
@@ -29,6 +38,11 @@ export class Panel {
   close(): void {
     this.element.classList.remove("is-open");
     this.anchor = null;
+  }
+
+  /** 今のアンカーのまま位置を計算し直す(resize/orientationchange 用)。閉じていれば何もしない。 */
+  reposition(): void {
+    if (this.isOpen && this.anchor !== null) this.position(this.anchor);
   }
 
   /**

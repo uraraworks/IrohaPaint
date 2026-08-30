@@ -188,6 +188,14 @@ class App {
   private importingUnderlay = false;
   /** chooseUnderlay() が store.list() を待っている間の二重実行を防ぐガード。 */
   private choosingUnderlay = false;
+  /**
+   * 取り込み済みの下敷きが1枚でもあるかどうか。iOS Safari はユーザー操作の直後(同じ
+   * 実行の流れの中)でないと input[type=file] のクリックを受け付けないため、写真ボタンの
+   * クリック処理では await this.underlayStore.list() を待たずにこのフラグだけを見て
+   * 「その場でファイル選択を開くか」を同期的に決める。起動時の復元処理・取り込み成功時・
+   * pruneUnderlays() 実行後・下敷き選択時に更新する。
+   */
+  private hasUnderlays = false;
   /** マスのサブメニューの下に出す、取り込み済みの下敷きを選び直す帯。 */
   private underlayStrip!: HTMLElement;
   private underlayStripTrack!: HTMLElement;
@@ -315,7 +323,10 @@ class App {
     this.underlayInput = document.createElement("input");
     this.underlayInput.type = "file";
     this.underlayInput.accept = "image/*";
-    this.underlayInput.hidden = true;
+    // hidden(=display:none)は使わない。iOS Safari は「表示されていない」input への
+    // プログラムからのクリックを受け付けないため、画面から見えなくするだけの
+    // .underlay-input クラス(style.css 側)を当てる。
+    this.underlayInput.className = "underlay-input";
     document.body.appendChild(this.underlayInput);
     this.underlayInput.addEventListener("change", () => {
       const file = this.underlayInput.files?.[0] ?? null;
@@ -387,6 +398,7 @@ class App {
     });
     void this.restore();
     void this.restoreUnderlay();
+    void this.refreshHasUnderlays();
     // 作品が勝手に消えないよう永続化を頼んでおく(結果は待たない)。
     void requestPersistentStorage();
   }
@@ -430,6 +442,15 @@ class App {
         if (panel.isOpen && !panel.element.contains(target)) panel.close();
       }
     });
+
+    // 画面の回転・リサイズで開いているパネルだけ位置を計算し直す(1箇所にまとめる)。
+    const repositionOpenPanels = (): void => {
+      for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel]) {
+        panel.reposition();
+      }
+    };
+    window.addEventListener("resize", repositionOpenPanels);
+    window.addEventListener("orientationchange", repositionOpenPanels);
   }
 
   private createSwatches(colors: readonly string[], className: string): HTMLElement {
@@ -557,7 +578,25 @@ class App {
           // 写真だけは特別扱い。下敷きが無ければまずファイルを選ばせる
           // (選ばれるまでは gridMode を変えないので、キャンセルされても
           // 「写真モードなのに何も無い」状態にはならない)。
-          void this.chooseUnderlay();
+          //
+          // iOS Safari はユーザー操作から await を1つでも挟むと、その先で呼ぶ
+          // input.click() がユーザー操作扱いされずファイル選択が開かない(黙って
+          // 何も起きない)。なので分岐そのものを await なしの同期処理にする:
+          // - underlayRecord があるものはそのまま表示(await なし)
+          // - 無いが hasUnderlays が true なら chooseUnderlay() に投げて直近のものを
+          //   開く(この先はファイル選択を開かないので await を挟んでよい)
+          // - hasUnderlays も false なら、この click ハンドラの実行の中で
+          //   同期的に underlayInput.click() を呼ぶ
+          if (this.underlayRecord !== null) {
+            this.setGridMode("photo");
+            this.sound.play("poko");
+            return;
+          }
+          if (this.hasUnderlays) {
+            void this.chooseUnderlay();
+            return;
+          }
+          this.underlayInput.click();
           return;
         }
         this.setGridMode(id);
@@ -651,24 +690,21 @@ class App {
   }
 
   /**
-   * 「マス」から写真を選んだときの入口。
-   * いま読み込んでいるものが無くても、取り込み済みが端末に残っていることがある
-   * (前回なしで終えた等)。ここで store を見ないと、12 枚あっても一覧へ戻れない。
+   * 「マス」から写真を選んだときの、取り込み済みが既にある場合の入口。
+   * 呼び出し元(写真ボタンの click ハンドラ)が「underlayRecord が無く、
+   * hasUnderlays が true」のときだけ await なしで呼ぶので、ここでは
+   * store から直近に使ったものを選び直す処理だけを行う(ファイル選択を
+   * 開く分岐は呼び出し元の同期処理側にあるので、ここは await をまたいでよい)。
    */
   private async chooseUnderlay(): Promise<void> {
-    if (this.underlayRecord !== null) {
-      // 既に取り込みがあれば、まず今選んでいるものをそのまま表示する。
-      // 選び直しは写真モードの下に出る帯(underlay-strip)から行う。
-      this.setGridMode("photo");
-      this.sound.play("poko");
-      return;
-    }
     if (this.choosingUnderlay) return;
     this.choosingUnderlay = true;
     try {
       const records = await this.underlayStore.list();
+      // hasUnderlays が古い情報のまま呼ばれた場合の保険。ファイル選択が開かない
+      // (すでに await をまたいでいる)が、データの不整合は解消しておく。
+      this.hasUnderlays = records.length > 0;
       if (records.length === 0) {
-        // 本当に何も無ければ、これまで通りファイル選択を開く。
         this.underlayInput.click();
         return;
       }
@@ -1171,9 +1207,12 @@ class App {
     try {
       const record = await importUnderlay(file, Date.now());
       await this.underlayStore.put(record);
+      // 取り込みに成功した時点で、下敷きは最低1枚は必ずある。
+      this.hasUnderlays = true;
       await this.applyUnderlay(record);
       // 上限を超えたぶんを黙って押し出す(画面には出さない。下敷きは取り込み直せるので知らせる必要がない)。
-      // 今取り込んだものは createUnderlay() で lastUsedAt が now になっているので押し出されない。
+      // 今取り込んだものは createUnderlay() で lastUsedAt が now になっているので押し出されない
+      // (=このプルーニングで hasUnderlays が false に戻ることはない)。
       await pruneUnderlays(this.underlayStore, MAX_UNDERLAYS);
       // 取り込みが成功して初めて写真モードへ入る(失敗時は元のモードのまま)。setGridMode の中で
       // 帯も作り直される(プルーニング後の一覧を反映させたいので、ここより前ではなく後で呼ぶ)。
@@ -1223,6 +1262,8 @@ class App {
    */
   private async selectUnderlay(record: UnderlayRecord): Promise<void> {
     const updated: UnderlayRecord = { ...record, lastUsedAt: Date.now() };
+    // 選び直せている時点で下敷きは最低1枚ある。
+    this.hasUnderlays = true;
     await this.underlayStore.put(updated);
     await this.applyUnderlay(updated);
     // 別の写真を選んだら、隠していても見えている状態から始める(持ち越さない)。
@@ -1494,6 +1535,19 @@ class App {
     ctx.globalAlpha = UNDERLAY_ALPHA[opacity];
     ctx.drawImage(this.underlayBitmap, imgLeft, imgTop, imgWidth, imgHeight);
     ctx.restore();
+  }
+
+  /**
+   * 起動時に hasUnderlays を揃える。gridMode が "photo" かどうかに関わらず、
+   * 端末に取り込み済みの下敷きが残っているかどうかだけを見る(写真ボタンの
+   * クリック処理が await なしで参照するためのフラグなので、gridMode の分岐とは独立)。
+   */
+  private async refreshHasUnderlays(): Promise<void> {
+    try {
+      this.hasUnderlays = (await this.underlayStore.list()).length > 0;
+    } catch (error) {
+      console.warn("したじきの一覧取得に失敗しました", error);
+    }
   }
 
   /**
