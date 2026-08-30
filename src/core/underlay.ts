@@ -40,16 +40,18 @@ export interface UnderlayRecord {
   opacity: UnderlayOpacity;
   /** 最後に下敷きとして選ばれた時刻(epoch ミリ秒)。古いものから押し出すときの基準。 */
   lastUsedAt: number;
-  /** 一覧に並べる小さい画像。原寸(長辺2048)を何枚も並べると一覧を開くだけで数十MB動くため。 */
+  /** 一覧に並べる小さい画像。原寸(長辺3072)を何枚も並べると一覧を開くだけで数十MB動くため。 */
   thumbnail: Blob;
 }
 
 /**
  * 取り込み時に縮小する長辺の上限。
- * キャンバスが 1748px 幅なので 2048 あれば拡大してなぞっても足りる。
+ * 写真の一部(例えば顔だけ)に寄って下敷きにする使い方があり、2048 では寄ったときに
+ * 元の画素の粗さが出る。下敷きは最大で「収まる倍率」の 8 倍まで拡げられるので、
+ * 3072 あれば寄っても輪郭が追える。1 枚あたり 1〜2MB、上限 12 枚で 20MB 前後に収まる。
  * 実際の縮小(canvas への描画・再エンコード)は取り込み側の仕事で、ここでは寸法計算だけ持つ。
  */
-export const UNDERLAY_MAX_EDGE = 2048;
+export const UNDERLAY_MAX_EDGE = 3072;
 
 /** 長辺が maxEdge を超えるときだけ縮小した整数寸法を返す。超えなければそのまま。最低 1px。 */
 export function fitSize(
@@ -94,8 +96,14 @@ function clamp(value: number, min: number, max: number): number {
 /**
  * 配置を正常な範囲へ丸める。
  *   - scale: fitPlacement() の倍率(収まる倍率)を基準に MIN〜MAX_SCALE_RATIO 倍の範囲へ。
- *   - tx/ty: 下敷きの矩形が紙の矩形と必ず重なるように(viewport.ts の clampView と同じ発想だが、
+ *   - tx/ty: 下敷きの矩形が紙の矩形と必ず一定量重なるように(viewport.ts の clampView と同じ発想だが、
  *     あちらは中心基準、こちらは重なり基準)。
+ *
+ * 指で動かせるようになると、点で接するところまで許す(重なり量ゼロ)だけでは画面の外へ
+ * 出し切って見失えてしまう。紙の 1/4 以上が必ず残るように引き戻す。
+ * ただし下敷きが小さくてその量に届かない(scaledWidth/Height が CANVAS_WIDTH/HEIGHT の
+ * 1/4 未満)場合は、下敷きの幅(高さ)ぶんを下限にする = 下敷き全体が紙とだけは重なる位置まで
+ * 許す(小さい下敷きが「1/4 は無理だから動かせない」にならないように)。
  */
 export function clampPlacement(
   placement: UnderlayPlacement,
@@ -110,12 +118,14 @@ export function clampPlacement(
   );
   const scaledWidth = width * scale;
   const scaledHeight = height * scale;
-  // 矩形どうしが重なる範囲 = 右端が紙の左端より内側(tx > -scaledWidth)、
-  // 左端が紙の右端より内側(tx < CANVAS_WIDTH)。境界(点で接する)までは許す。
+  // 必ず重なっていてほしい量。紙の 1/4、ただし下敷きの幅(高さ)がそれより小さければそちらを使う。
+  const requiredX = Math.min(CANVAS_WIDTH / 4, scaledWidth);
+  const requiredY = Math.min(CANVAS_HEIGHT / 4, scaledHeight);
+  // requiredX = 0 のとき(旧仕様)は [-scaledWidth, CANVAS_WIDTH] と一致する = 点で接するところまで許す。
   return {
     scale,
-    tx: clamp(placement.tx, -scaledWidth, CANVAS_WIDTH),
-    ty: clamp(placement.ty, -scaledHeight, CANVAS_HEIGHT),
+    tx: clamp(placement.tx, requiredX - scaledWidth, CANVAS_WIDTH - requiredX),
+    ty: clamp(placement.ty, requiredY - scaledHeight, CANVAS_HEIGHT - requiredY),
   };
 }
 

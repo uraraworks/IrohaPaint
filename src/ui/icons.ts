@@ -82,3 +82,53 @@ export const CHEVRON_RIGHT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fi
   stroke="#3d3730" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
   <path d="M12 6l10 10-10 10"/>
 </svg>`;
+
+/** うごかす(下敷きを「置く」状態に入る)。上下左右へ動かせることを十字の矢印で表す。 */
+export const MOVE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="#3d3730"
+  stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M16 4v24M4 16h24"/>
+  <path d="M16 4l-4 4M16 4l4 4M16 28l-4-4M16 28l4-4M4 16l4-4M4 16l4 4M28 16l-4-4M28 16l-4 4"/>
+</svg>`;
+
+/** 見えている(目)。下敷きを「かくす」ボタンの、今は見えている状態を表す。 */
+export const EYE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="#3d3730"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 16s5-9 12-9 12 9 12 9-5 9-12 9-12-9-12-9z"/>
+  <circle cx="16" cy="16" r="4"/>
+</svg>`;
+
+/** 隠れている(目に斜線)。下敷きを「みせる」ボタンの、今は隠れている状態を表す。 */
+export const EYE_OFF_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="#3d3730"
+  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 16s5-9 12-9 12 9 12 9-5 9-12 9-12-9-12-9z"/>
+  <circle cx="16" cy="16" r="4"/>
+  <path d="M6 6l20 20"/>
+</svg>`;
+
+/**
+ * 画面フィルタ(目の負担を減らす表示)の切り替えボタン。太陽 → だんだん欠けていく太陽 → 月、で
+ * 「ふつう・やわらか・くらい・よる」の4段階が一目で分かるようにする。塗りの色そのものを
+ * 段階のヒントにする(白 → うすい灰 → 濃い灰 → 琥珀)。
+ */
+export const FILTER_NORMAL_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <circle cx="16" cy="16" r="7" fill="#fffdf7" stroke="#3d3730" stroke-width="2"/>
+  <path d="M16 3v4M16 25v4M3 16h4M25 16h4M7 7l2.8 2.8M22.2 22.2L25 25M25 7l-2.8 2.8M9.8 22.2L7 25"
+    stroke="#3d3730" stroke-width="2" stroke-linecap="round"/>
+</svg>`;
+
+export const FILTER_SOFT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <circle cx="16" cy="16" r="7" fill="#e4dfd3" stroke="#3d3730" stroke-width="2"/>
+  <path d="M16 3v4M16 25v4M3 16h4M25 16h4M7 7l2.8 2.8M22.2 22.2L25 25M25 7l-2.8 2.8M9.8 22.2L7 25"
+    stroke="#3d3730" stroke-width="2" stroke-linecap="round" opacity="0.55"/>
+</svg>`;
+
+export const FILTER_DARK_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <circle cx="16" cy="16" r="7" fill="#9d968a" stroke="#3d3730" stroke-width="2"/>
+</svg>`;
+
+export const FILTER_NIGHT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <path d="M23 6a11 11 0 1 0 3 15.5A9 9 0 0 1 23 6z" fill="#e0a95f" stroke="#3d3730" stroke-width="2"
+    stroke-linejoin="round"/>
+  <circle cx="22" cy="10" r="1.3" fill="#3d3730"/>
+  <circle cx="25" cy="15" r="1" fill="#3d3730"/>
+</svg>`;

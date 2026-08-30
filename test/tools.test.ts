@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHEST_ENABLED, INITIAL_TOOLS, nextUnlock, UNLOCKS, type ToolId } from "../src/core/tools.ts";
+import { CHEST_ENABLED, INITIAL_TOOLS, nextUnlock, orderTools, UNLOCKS, type ToolId } from "../src/core/tools.ts";
 
 /** 宝箱を使うときの初期道具（解放ぶんを含まない状態）。 */
 const STARTER: readonly ToolId[] = INITIAL_TOOLS.filter(
@@ -41,6 +41,27 @@ describe("nextUnlock（宝箱 ON のときの規則）", () => {
 
   it("全部持っていたら null", () => {
     expect(chestRule(9999, [...owned, ...UNLOCKS.map((u) => u.tool)])).toBeNull();
+  });
+});
+
+describe("orderTools(作品・完成をツールバー末尾に固定する)", () => {
+  it("道具が増えても作品・完成は末尾のまま(順序は works → done)", () => {
+    const owned: ToolId[] = ["pen", "color", "works", "eraser", "done", "undo", "picker", "fill"];
+    expect(orderTools(owned)).toEqual(["pen", "color", "eraser", "undo", "picker", "fill", "works", "done"]);
+  });
+
+  it("片方だけ持っている場合はそれだけ末尾に置く", () => {
+    expect(orderTools(["pen", "works", "color"])).toEqual(["pen", "color", "works"]);
+    expect(orderTools(["pen", "done", "color"])).toEqual(["pen", "color", "done"]);
+  });
+
+  it("どちらも持っていない場合は元の順序のまま", () => {
+    expect(orderTools(["pen", "color", "eraser"])).toEqual(["pen", "color", "eraser"]);
+  });
+
+  it("末尾以外の順序は保たれる(安定な並べ替え)", () => {
+    const owned: ToolId[] = ["undo", "redo", "grid", "together", "works", "picker", "fill", "done"];
+    expect(orderTools(owned)).toEqual(["undo", "redo", "grid", "together", "picker", "fill", "works", "done"]);
   });
 });
 

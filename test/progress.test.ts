@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { loadProgress, saveProgress } from "../src/core/progress.ts";
+import { loadProgress, nextScreenFilter, saveProgress } from "../src/core/progress.ts";
 import { INITIAL_TOOLS } from "../src/core/tools.ts";
 
 /** localStorage が無い Node 環境用の最小実装。 */
@@ -24,6 +24,7 @@ describe("進捗の保存", () => {
       underlayId: "under-1",
       nib: "gpen",
       multiDraw: true,
+      screenFilter: "night",
     });
     const progress = loadProgress();
     expect(progress.ownedTools).toContain("picker");
@@ -33,6 +34,7 @@ describe("進捗の保存", () => {
     expect(progress.underlayId).toBe("under-1");
     expect(progress.nib).toBe("gpen");
     expect(progress.multiDraw).toBe(true);
+    expect(progress.screenFilter).toBe("night");
   });
 
   it("下敷きが無ければ underlayId は null のまま", () => {
@@ -45,6 +47,7 @@ describe("進捗の保存", () => {
       underlayId: null,
       nib: "crayon",
       multiDraw: false,
+      screenFilter: "normal",
     });
     expect(loadProgress().underlayId).toBeNull();
   });
@@ -55,6 +58,12 @@ describe("進捗の保存", () => {
     expect(progress.ownedTools).toEqual([...INITIAL_TOOLS]);
     expect(progress.strokeCount).toBe(0);
     expect(progress.nib).toBe("crayon");
+    expect(progress.screenFilter).toBe("normal");
+  });
+
+  it("壊れた画面フィルタ値は ふつう にフォールバックする", () => {
+    installStorage({ "iroha-paint:progress": '{"screenFilter":"space"}' });
+    expect(loadProgress().screenFilter).toBe("normal");
   });
 
   it("localStorage が使えなくても落ちない", () => {
@@ -76,7 +85,17 @@ describe("進捗の保存", () => {
         underlayId: null,
         nib: "crayon",
         multiDraw: false,
+        screenFilter: "normal",
       }),
     ).not.toThrow();
+  });
+});
+
+describe("nextScreenFilter(画面フィルタの4段階を一周する)", () => {
+  it("ふつう → やわらか → くらい → よる → ふつう の順に一周する", () => {
+    expect(nextScreenFilter("normal")).toBe("soft");
+    expect(nextScreenFilter("soft")).toBe("dark");
+    expect(nextScreenFilter("dark")).toBe("night");
+    expect(nextScreenFilter("night")).toBe("normal");
   });
 });

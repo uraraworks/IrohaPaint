@@ -27,13 +27,13 @@ describe("fitSize", () => {
   it("長辺が上限を超えるときだけ比率を保って縮小する", () => {
     const result = fitSize(4096, 2048);
     expect(result.width).toBe(UNDERLAY_MAX_EDGE);
-    expect(result.height).toBe(1024);
+    expect(result.height).toBe(Math.round((UNDERLAY_MAX_EDGE / 4096) * 2048));
   });
 
   it("縦長画像でも比率を保つ", () => {
     const result = fitSize(1000, 4000);
     expect(result.height).toBe(UNDERLAY_MAX_EDGE);
-    expect(result.width).toBe(512);
+    expect(result.width).toBe(Math.round((UNDERLAY_MAX_EDGE / 4000) * 1000));
   });
 });
 
@@ -82,15 +82,42 @@ describe("clampPlacement", () => {
     expect(ok.scale).toBeCloseTo(fit.scale * 2);
   });
 
-  it("紙から完全に外れる tx/ty を引き戻す(重なりが残るところまで)", () => {
+  it("紙から完全に外れる tx/ty を引き戻す(紙の1/4以上が重なるところまで)", () => {
+    const scaledWidth = width * fit.scale;
+    const scaledHeight = height * fit.scale;
+    const requiredX = Math.min(CANVAS_WIDTH / 4, scaledWidth);
+    const requiredY = Math.min(CANVAS_HEIGHT / 4, scaledHeight);
+
     const farRight = clampPlacement({ scale: fit.scale, tx: CANVAS_WIDTH + 5000, ty: 0 }, width, height);
-    expect(farRight.tx).toBeCloseTo(CANVAS_WIDTH);
+    expect(farRight.tx).toBeCloseTo(CANVAS_WIDTH - requiredX);
 
     const farLeft = clampPlacement({ scale: fit.scale, tx: -100000, ty: 0 }, width, height);
-    expect(farLeft.tx).toBeCloseTo(-(width * fit.scale));
+    expect(farLeft.tx).toBeCloseTo(requiredX - scaledWidth);
 
     const farDown = clampPlacement({ scale: fit.scale, tx: 0, ty: CANVAS_HEIGHT + 5000 }, width, height);
-    expect(farDown.ty).toBeCloseTo(CANVAS_HEIGHT);
+    expect(farDown.ty).toBeCloseTo(CANVAS_HEIGHT - requiredY);
+
+    // 完全に外れる位置(紙の矩形と全く重ならない遠い場所)を渡しても、
+    // 引き戻された結果は必ず紙の矩形と 1/4 以上重なる。
+    const farAway = clampPlacement({ scale: fit.scale, tx: 999999, ty: 999999 }, width, height);
+    const overlapX = Math.min(farAway.tx + scaledWidth, CANVAS_WIDTH) - Math.max(farAway.tx, 0);
+    const overlapY = Math.min(farAway.ty + scaledHeight, CANVAS_HEIGHT) - Math.max(farAway.ty, 0);
+    expect(overlapX).toBeGreaterThanOrEqual(requiredX - 0.001);
+    expect(overlapY).toBeGreaterThanOrEqual(requiredY - 0.001);
+  });
+
+  it("下敷きが小さくて紙の1/4に届かない場合は、下敷き全体ぶんを下限にする", () => {
+    // 紙の 1/4 よりずっと小さい下敷き(fit の 0.1 倍程度)。
+    const tinyScale = fit.scale * UNDERLAY_MIN_SCALE_RATIO;
+    const scaledWidth = width * tinyScale;
+    expect(scaledWidth).toBeLessThan(CANVAS_WIDTH / 4);
+
+    const farRight = clampPlacement({ scale: tinyScale, tx: CANVAS_WIDTH + 5000, ty: 0 }, width, height);
+    // 下限は「下敷きの幅ぶん」= 右端が紙の右端に一致する位置まで。
+    expect(farRight.tx).toBeCloseTo(CANVAS_WIDTH - scaledWidth);
+
+    const farLeft = clampPlacement({ scale: tinyScale, tx: -100000, ty: 0 }, width, height);
+    expect(farLeft.tx).toBeCloseTo(0);
   });
 
   it("紙と重なっている位置は動かさない", () => {

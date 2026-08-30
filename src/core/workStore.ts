@@ -1,7 +1,7 @@
 // 作品ストアの永続化。IndexedDB に作品レコードをそのまま入れる。
 // Blob は IndexedDB がそのまま格納できる(structured clone)ので、
 // PNG を base64 化するような無駄な変換はしない。
-import { SCHEMA_VERSION, type WorkRecord } from "./model.ts";
+import { CANVAS_HEIGHT, CANVAS_WIDTH, SCHEMA_VERSION, type PageData, type WorkRecord } from "./model.ts";
 
 export interface StoredEnvelope {
   version: number;
@@ -82,15 +82,28 @@ function promisify<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
-/** バージョン不一致・壊れたレコードは無視する(復元に失敗しても起動はする)。 */
-function unwrap(raw: unknown): WorkRecord | null {
+/**
+ * バージョン不一致・壊れたレコードは無視する(復元に失敗しても起動はする)。
+ *
+ * canvasWidth/canvasHeight・pages[].deleted は後から足したフィールドなので、
+ * 古い保存データには入っていない。SCHEMA_VERSION を上げて古い作品ごと捨てる
+ * ようなことは絶対にしない(子どもの絵なので)。代わりにここで欠けている分だけ
+ * 補う。今ある保存データは全部 CANVAS_WIDTH x CANVAS_HEIGHT で描かれたものなので、
+ * その値で補って正しい。deleted も未指定なら「消していない」で正しい。
+ */
+export function unwrap(raw: unknown): WorkRecord | null {
   const envelope = raw as StoredEnvelope | undefined;
   if (envelope === undefined) return null;
   if (envelope.version !== SCHEMA_VERSION) return null;
   const work = envelope.work;
   if (work === undefined || work === null) return null;
   if (typeof work.id !== "string" || !Array.isArray(work.pages)) return null;
-  return work;
+  return {
+    ...work,
+    canvasWidth: work.canvasWidth ?? CANVAS_WIDTH,
+    canvasHeight: work.canvasHeight ?? CANVAS_HEIGHT,
+    pages: work.pages.map((page: PageData) => ({ ...page, deleted: page.deleted ?? false })),
+  };
 }
 
 export class IndexedDbWorkStore implements WorkStore {

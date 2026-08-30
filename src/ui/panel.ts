@@ -31,31 +31,44 @@ export class Panel {
     this.anchor = null;
   }
 
-  /** ボタンの真上(左バーなら右横)に、画面からはみ出さない位置で置く。 */
+  /**
+   * ボタンの真上(左バーなら右横)に、画面からはみ出さない位置で置く。
+   *
+   * 以前は top をパネルの高さから逆算していた(`top = ボタン上端 - パネル高さ - 余白`)。
+   * パネルは中身(サブメニューの選択など)が変わると行数が増減し、高さが変わっていく。
+   * 高さから上端を逆算すると、その変化の途中の高さを拾ってしまい、変化が終わったあと
+   * 下端がずれる(浮いて見える)。下端を直接指定すれば測定そのものが要らなくなり、
+   * いつ再計算しても同じ結果になる — パネルは常に上へ伸び縮みするだけで下端は動かない。
+   * 左バー配置の縦中央寄せも同じ理由で、高さを測る代わりに transform: translateY(-50%)
+   * を使う。横方向(中央寄せ)だけは .grid-panel の max-width で幅がすでに閉じ込めて
+   * あり、幅はアニメーション中も変わらないので、はみ出し防止のクランプのために測ってよい。
+   */
   private position(anchor: HTMLElement): void {
     const button = anchor.getBoundingClientRect();
-    // getBoundingClientRect は開閉アニメーション中の transform(scale 0.6) を反映してしまい、
-    // 実寸より小さい値を返す。レイアウト上の大きさが要るので offset* を使う。
-    const panel = { width: this.element.offsetWidth, height: this.element.offsetHeight };
     const margin = 12;
     const leftBar = document.body.querySelector(".app")?.classList.contains("bar-left") === true;
+    const panelWidth = this.element.offsetWidth;
 
-    let left: number;
-    let top: number;
     if (leftBar) {
-      left = button.right + margin;
-      top = button.top + button.height / 2 - panel.height / 2;
+      let left = button.right + margin;
+      left = Math.min(Math.max(margin, left), window.innerWidth - panelWidth - margin);
+      const centerY = Math.min(Math.max(margin, button.top + button.height / 2), window.innerHeight - margin);
+      this.element.style.left = `${left}px`;
+      this.element.style.bottom = "";
+      this.element.style.top = `${centerY}px`;
+      this.element.style.transform = "translateY(-50%)";
     } else {
-      left = button.left + button.width / 2 - panel.width / 2;
-      top = button.top - panel.height - margin;
+      // ツールバー上端から余白ぶん上にパネルの下端を置く。
+      const bar = document.querySelector(".toolbar")?.getBoundingClientRect();
+      const barTop = bar?.top ?? window.innerHeight;
+      const bottom = window.innerHeight - barTop + margin;
+
+      let left = button.left + button.width / 2 - panelWidth / 2;
+      left = Math.min(Math.max(margin, left), window.innerWidth - panelWidth - margin);
+      this.element.style.left = `${left}px`;
+      this.element.style.top = "";
+      this.element.style.bottom = `${bottom}px`;
+      this.element.style.transform = "";
     }
-    // ツールバーに重ねない。重なるとパネル越しにボタンを押してしまう。
-    const bar = document.querySelector(".toolbar")?.getBoundingClientRect();
-    const limitTop = leftBar || bar === undefined ? window.innerHeight : bar.top;
-    left = Math.min(Math.max(margin, left), window.innerWidth - panel.width - margin);
-    top = Math.min(Math.max(margin, top), limitTop - panel.height - margin);
-    top = Math.max(margin, top);
-    this.element.style.left = `${left}px`;
-    this.element.style.top = `${top}px`;
   }
 }

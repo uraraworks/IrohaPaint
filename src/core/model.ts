@@ -8,6 +8,14 @@
 //   - スナップショットは追記のみ                … 「まえにもどす」/ 上描き事故の復旧
 //   - マーク ID を持つ(名前は持たない=個人情報ゼロ)
 // ここを後から変えると作り直しになるため、UI が使わないフィールドも今のうちに定義する。
+//
+// 2026-08: キャンバスサイズ切り替え・ページ機能に備えたデータ拡張(UI はまだ無い)。
+//   - 作品がどの画素数で描かれたかを記録する(canvasWidth/canvasHeight)。
+//     記録し忘れると、サイズが選べるようになった瞬間に「過去の作品を引き伸ばすか
+//     余白を付けるか」の判断材料が無くなる。しかも利用者の端末に既にあるデータには
+//     後から書き込めないので、今のうちから記録を始める。
+//   - ページにもソフトデリートを通す(deleted)。作品と同じ「本当には消さない」規則。
+import type { LabelPart } from "./tools.ts";
 
 /** 印刷(ポストカード 148x100mm / 300dpi)を見据えた固定キャンバスサイズ。横向き。 */
 export const CANVAS_WIDTH = 1748;
@@ -29,9 +37,24 @@ export interface PageData {
   id: string;
   /** ページの絵。PNG。 */
   image: Blob;
+  /**
+   * ソフトデリート。作品(WorkRecord.deleted)と同じ規則をページにも通す。
+   * 「3 ページ目を消したつもりが戻せない」を起きなくするための下ごしらえ。
+   * Phase 0 の UI は 1 ページしか作らない/消さないので、常に false のまま使われる
+   * (振る舞いは変わらない。フィールドを用意するだけ)。
+   */
+  deleted: boolean;
 }
 
-/** 作品の状態を丸ごと写したもの。追記のみで、更新も削除もしない。 */
+/**
+ * 作品の状態を丸ごと写したもの。追記のみで、更新も削除もしない。
+ *
+ * canvasWidth/canvasHeight は *持たせない*。背景§1 の通り寸法は「作品ごと」の性質で、
+ * 1 冊(1 WorkRecord)の中でページの紙の大きさが途中で変わることは無い前提のため、
+ * WorkRecord 側に 1 つ持てば足りる。スナップショットごとに複製すると、
+ * 「同じ作品なのにスナップショットによって寸法が違う」という本来あり得ない状態を
+ * 型の上で許してしまい、かえって不整合の元になる。
+ */
 export interface WorkSnapshot {
   id: string;
   /** epoch ミリ秒。 */
@@ -58,6 +81,15 @@ export interface WorkRecord {
   markId: string | null;
   /** ソフトデリート。true でもレコードは残す(「とりもどす」で復活)。 */
   deleted: boolean;
+  /**
+   * この作品が描かれたキャンバスの画素数。
+   * ページごとではなく作品ごとに持つ … 1 冊の中でページの紙の大きさが変わることはないため。
+   * 古い保存データには無いフィールド。workStore.ts の unwrap() で読むときに、
+   * 欠けていたら現在の CANVAS_WIDTH/CANVAS_HEIGHT を補う(＝今ある保存データは
+   * 全部この寸法で描かれているので、補って正しい)。
+   */
+  canvasWidth: number;
+  canvasHeight: number;
   /** 現在の中身。Phase 0 は常に 1 ページ。 */
   pages: PageData[];
   /**
@@ -136,15 +168,23 @@ export function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${idCounter.toString(36)}-${rand}`;
 }
 
-export function createWork(image: Blob, now: number, thumbnail?: Blob): WorkRecord {
+export function createWork(
+  image: Blob,
+  now: number,
+  thumbnail?: Blob,
+  canvasWidth: number = CANVAS_WIDTH,
+  canvasHeight: number = CANVAS_HEIGHT,
+): WorkRecord {
   return {
     id: createId("work"),
     createdAt: now,
     updatedAt: now,
     markId: null,
     deleted: false,
+    canvasWidth,
+    canvasHeight,
     ...(thumbnail === undefined ? {} : { thumbnail }),
-    pages: [{ id: createId("page"), image }],
+    pages: [{ id: createId("page"), image, deleted: false }],
     snapshots: [],
   };
 }
@@ -171,3 +211,55 @@ export function snapshotOf(work: WorkRecord, now: number, reason: SnapshotReason
     reason,
   };
 }
+
+// ── 選べるキャンバスサイズの表(未使用) ──────────────────────────────
+//
+// まだどこからも使わない。将来「新しい作品」でサイズを選べるようにする際に、
+// この表から選んで createWork() の canvasWidth/canvasHeight に渡す想定。
+// GRID_MODES(src/core/grid.ts)と同じ作り方: id をキーにした Readonly<Record> +
+// 表示順を別に持つ配列。
+
+export type CanvasSizeId = "postcard-landscape" | "postcard-portrait" | "manga-b4";
+
+export interface CanvasSizeDef {
+  id: CanvasSizeId;
+  label: LabelPart[];
+  width: number;
+  height: number;
+}
+
+export const CANVAS_SIZES: Readonly<Record<CanvasSizeId, CanvasSizeDef>> = {
+  // 現行の固定サイズ。はがき横(148x100mm)を 300dpi で換算 = 1748x1181。
+  "postcard-landscape": {
+    id: "postcard-landscape",
+    label: [{ base: "はがき", ruby: "はがき" }, { base: "横", ruby: "よこ" }],
+    width: CANVAS_WIDTH,
+    height: CANVAS_HEIGHT,
+  },
+  // はがき縦(100x148mm)を 300dpi で換算 = 1181x1748。横長のちょうど 90 度回転。
+  "postcard-portrait": {
+    id: "postcard-portrait",
+    label: [{ base: "はがき", ruby: "はがき" }, { base: "縦", ruby: "たて" }],
+    width: CANVAS_HEIGHT,
+    height: CANVAS_WIDTH,
+  },
+  // マンガ原稿用紙 B4(257x364mm)相当の比率。
+  // 実寸(257x364mm)をそのまま 300dpi 換算すると 3035x4299 になり、
+  // 他の 2 枠(1748x1181 系)と比べて画素数が 6 倍近くに跳ね上がって扱いづらい
+  // (端末のメモリ・保存容量・描画負荷が急に変わる)。
+  // そこで「短辺をポストカード枠の 1748 に揃えた近似」を採用する:
+  //   長辺 = 1748 × (364 / 257) = 2475.77 → 四捨五入で 2476
+  // 実寸の縦横比(364:257 ≒ 1.4163)はそのまま保ち、画素数だけ他の枠と揃える。
+  "manga-b4": {
+    id: "manga-b4",
+    label: [{ base: "マンガ原稿", ruby: "まんがげんこう" }],
+    width: 1748,
+    height: 2476,
+  },
+};
+
+export const CANVAS_SIZE_ORDER: readonly CanvasSizeId[] = [
+  "postcard-landscape",
+  "postcard-portrait",
+  "manga-b4",
+];

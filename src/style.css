@@ -162,6 +162,37 @@ body {
   display: block;
 }
 
+/* 置く操作中は紙と同じ大きさの underlay-layer ではなく、全画面の place-canvas
+   (下敷きの外まで描ける)へ描き直す。二重に描かないよう、ここは隠す。 */
+.underlay-layer.is-placing {
+  display: none;
+}
+
+/* 「かくす」ボタンで止めた表示。濃さ・配置は underlayRecord 側の状態のままで、
+   ここでは表示だけを止める。 */
+.underlay-layer.is-hidden-by-user {
+  display: none;
+}
+
+/*
+ * 置く操作中だけ出る全画面 canvas。写真の全体を画面座標で描き、紙の外へはみ出した
+ * 部分もここでだけ見える(はみ出し=写真の続きがある、という手がかり)。
+ * ドラッグ・ピンチもここで拾う(installPlaceInput)。
+ */
+.place-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  touch-action: none;
+  cursor: grab;
+}
+
+.place-canvas.is-visible {
+  display: block;
+}
+
 .grid-layer {
   position: absolute;
   inset: 0;
@@ -194,10 +225,24 @@ body {
   pointer-events: none;
 }
 
-.sound-toggle {
+/*
+ * 右上に浮かぶ 音/全画面/かくす/フィルタ/ぜんぶ見る をまとめる横並びコンテナ。
+ * ボタンは出たり消えたりする(全画面は使える環境だけ、かくすとぜんぶ見るは
+ * 写真の下敷き/拡大中だけ)。座標を直接書くと、消えたぶんが穴として残る。
+ * 並びで詰める形にしておけば、増えても減っても隙間ができない。
+ * 見た目の並び(右から 音 → 全画面 → かくす → フィルタ → ぜんぶ見る)は
+ * DOM の追加順(音が先頭)を row-reverse で逆さに並べることで、座標を書かずに表現している。
+ */
+.stage-toggles {
   position: absolute;
   top: 12px;
   right: 12px;
+  display: flex;
+  flex-direction: row-reverse;
+  gap: 12px;
+}
+
+.sound-toggle {
   width: 56px;
   height: 56px;
   border: none;
@@ -217,24 +262,66 @@ body {
   height: 32px;
 }
 
-/* 全画面ボタン。音のとなりに並べる(使える環境にだけ出る)。 */
-.fullscreen-toggle {
-  right: 80px;
+/* なぞった線と下敷きの写真を見比べる「かくす/みせる」。
+   写真の下敷きが実際に表示されているときだけ出す(置く操作中も出さない)。 */
+.underlay-toggle {
+  display: none;
 }
 
-/* 拡大しているときだけ出る「ぜんぶ見る」。押すと等倍に戻る。 */
+.underlay-toggle.is-visible {
+  display: block;
+}
+
+/*
+ * 画面フィルタの層(目の負担を減らす表示)。
+ * position: fixed で viewport を直接覆う。操作を一切邪魔しないよう pointer-events: none にし、
+ * 絵にもツールバーの押しやすさにも影響しない(見た目だけの層)。
+ * ふつう(is-normal)は背景を出さない = 何もしない。
+ */
+.screen-filter {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  transition: background-color 0.18s ease;
+}
+
+/* やわらか / くらい: 黒を薄く重ねて明るさだけ落とす(色相は変えない)。 */
+.screen-filter.is-soft {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.screen-filter.is-dark {
+  background: rgba(0, 0, 0, 0.26);
+}
+
+/*
+ * よる: 琥珀色を乗算(multiply)で重ねて青みを減らす。
+ * 半透明を上に「加算」すると暗部が持ち上がって白っぽくなってしまうが、
+ * multiply なら実物のブルーライトカットフィルム/フィルタ膜と同じ振る舞い
+ * (各チャンネルに 0-1 の係数を掛けるだけ)になり、暗部は暗いまま青だけ減る。
+ */
+.screen-filter.is-night {
+  background: #ffb347;
+  mix-blend-mode: multiply;
+}
+
+/*
+ * 拡大しているときだけ出る「ぜんぶ見る」。押すと等倍に戻る。
+ * 他は「出たり消えたりするボタン」として .stage-toggles (flex/row-reverse) に
+ * まとめてあるので、これも個別の position/right を持たずそこに並べる
+ * (でないと出したときに他のボタンと重なる)。文字が入る分だけ他より横幅が広い。
+ */
 .fit-button {
-  position: absolute;
-  top: 12px;
-  right: 148px;
   display: none;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 1px;
-  width: 56px;
+  width: 64px;
   height: 56px;
   border: none;
-  border-radius: 50%;
+  border-radius: 28px;
   background: rgba(255, 255, 255, 0.92);
   box-shadow: var(--shadow);
   color: var(--ink);
@@ -255,6 +342,38 @@ body {
 .fit-button svg {
   width: 24px;
   height: 24px;
+}
+
+/*
+ * 下敷きを「置く」状態のあいだだけ出る「これでいい」。
+ * 指が届く位置(ツールバーの上あたり)に置く。新しいボタンの見た目は作らず、
+ * 「完成！」(.tool-button.done)と同じ角丸・太字の作法に揃える。
+ */
+.place-done-button {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  display: none;
+  padding: 14px 28px;
+  border: none;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  z-index: 15;
+  transition: transform 0.18s var(--spring);
+}
+
+.place-done-button.is-visible {
+  display: block;
+}
+
+.place-done-button:active {
+  transform: translateX(-50%) scale(0.92);
 }
 
 /* --- ツールバー --- */
@@ -678,6 +797,24 @@ ruby > rt {
 /* 今表示している下敷きには、他のボタンと同じ is-active の見た目を付ける。 */
 .underlay-thumb.is-active {
   border-color: var(--accent);
+}
+
+/*
+ * 濃さ3段階(うすい/ふつう/こい) + うごかす、の行。
+ * 写真が選ばれている間だけ帯の下に出す。.underlay-strip と同じ理由(.panel の
+ * flex-wrap を使って独立した 1 行にする)で flex-basis: 100% にする。
+ * ボタン自体はなし/方眼/ビーズ/写真の行と同じ nib-button を使い回すので、
+ * 404px の幅上限にちょうど 4 個収まる(grid-panel のコメント参照)。
+ */
+.underlay-opacity-row {
+  display: none;
+  flex-basis: 100%;
+  gap: 12px;
+  justify-content: center;
+}
+
+.underlay-opacity-row.is-visible {
+  display: flex;
 }
 
 /* ペン先(クレヨン / Ｇペン / 筆)。太さの段の上に置く。 */

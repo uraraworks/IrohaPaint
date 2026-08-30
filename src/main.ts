@@ -20,16 +20,26 @@ import {
   type WorkRecord,
 } from "./core/model.ts";
 import { createWorkStore, requestPersistentStorage } from "./core/workStore.ts";
-import { MAX_UNDERLAYS, UNDERLAY_ALPHA, type UnderlayRecord } from "./core/underlay.ts";
+import { clampPlacement, scaleAt, UNDERLAY_ALPHA, MAX_UNDERLAYS, type UnderlayOpacity, type UnderlayRecord } from "./core/underlay.ts";
 import { importUnderlay, UnderlayImportError, type UnderlayImportErrorCode } from "./core/underlayImport.ts";
 import { createUnderlayStore, pruneUnderlays, type UnderlayStore } from "./core/underlayStore.ts";
 import { hexToRgba, Surface } from "./core/surface.ts";
-import { installPointerInput, type PointerInputControl } from "./core/pointerInput.ts";
+import { installPointerInput, toCanvasPoint, type GestureChange, type PointerInputControl } from "./core/pointerInput.ts";
 import { clampView, IDENTITY, panBy, toCss, zoomAt, type ViewTransform } from "./core/viewport.ts";
-import { CHEST_ICON_SVG, INITIAL_TOOLS, nextUnlock, TOOL_DEFS, type ToolId, type Unlock } from "./core/tools.ts";
+import {
+  CHEST_ICON_SVG,
+  INITIAL_TOOLS,
+  nextUnlock,
+  orderTools,
+  TOOL_DEFS,
+  TRAILING_TOOLS,
+  type LabelPart,
+  type ToolId,
+  type Unlock,
+} from "./core/tools.ts";
 import { labelText, plainText, renderLabel, renderRuby } from "./ui/label.ts";
 import { SoundPlayer } from "./core/sound.ts";
-import { loadProgress, saveProgress } from "./core/progress.ts";
+import { loadProgress, nextScreenFilter, saveProgress, type ScreenFilterMode } from "./core/progress.ts";
 import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
@@ -38,9 +48,16 @@ import { installHScroll, type HScrollArrows, type HScrollControl } from "./ui/hs
 import {
   CHEVRON_LEFT_SVG,
   CHEVRON_RIGHT_SVG,
+  EYE_OFF_SVG,
+  EYE_SVG,
+  FILTER_DARK_SVG,
+  FILTER_NIGHT_SVG,
+  FILTER_NORMAL_SVG,
+  FILTER_SOFT_SVG,
   FIT_SVG,
   FULLSCREEN_EXIT_SVG,
   FULLSCREEN_SVG,
+  MOVE_SVG,
   SOUND_OFF_SVG,
   SOUND_ON_SVG,
 } from "./ui/icons.ts";
@@ -51,6 +68,14 @@ import {
   toggleFullscreen,
 } from "./core/fullscreen.ts";
 
+/** 画面フィルタの段階ごとの見た目(アイコン・aria-label)。 */
+const SCREEN_FILTER_DEFS: Readonly<Record<ScreenFilterMode, { icon: string; label: string }>> = {
+  normal: { icon: FILTER_NORMAL_SVG, label: "ふつう" },
+  soft: { icon: FILTER_SOFT_SVG, label: "やわらか" },
+  dark: { icon: FILTER_DARK_SVG, label: "くらい" },
+  night: { icon: FILTER_NIGHT_SVG, label: "よる" },
+};
+
 /**
  * 下敷きの帯にある「あたらしく取り込む」ボタンのプラス。
  * icons.ts は他画面と共有なので変えず、この画面専用にここへ置く(規格だけ揃える: 32x32 / 線 #3d3730・太さ2)。
@@ -59,6 +84,37 @@ const UNDERLAY_ADD_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
   <circle cx="16" cy="16" r="12" fill="#eaf4fc" stroke="#3d3730" stroke-width="2"/>
   <path d="M16 10v12M10 16h12" stroke="#3d3730" stroke-width="2.6" stroke-linecap="round"/>
 </svg>`;
+
+/** 濃さ 3 段階のボタン群。UnderlayOpacity のキー順そのまま。 */
+const UNDERLAY_OPACITY_ORDER: readonly UnderlayOpacity[] = ["faint", "normal", "strong"];
+const UNDERLAY_OPACITY_LABELS: Readonly<Record<UnderlayOpacity, LabelPart[]>> = {
+  faint: [{ base: "薄", ruby: "うす" }, { base: "い" }],
+  normal: [{ base: "普通", ruby: "ふつう" }],
+  strong: [{ base: "濃", ruby: "こ" }, { base: "い" }],
+};
+
+/** 「うごかす」ボタンのラベル。 */
+const UNDERLAY_MOVE_LABEL: LabelPart[] = [{ base: "動", ruby: "うご" }, { base: "かす" }];
+
+/** 濃さボタンのアイコン。UNDERLAY_ALPHA と同じ値の丸にして、押す前から結果が分かるようにする。 */
+function underlayOpacityIconSvg(opacity: UnderlayOpacity): string {
+  return `<svg viewBox="0 0 32 32" aria-hidden="true">
+    <circle cx="16" cy="16" r="12" fill="#3d3730" fill-opacity="${UNDERLAY_ALPHA[opacity]}"
+      stroke="#3d3730" stroke-width="2"/>
+  </svg>`;
+}
+
+/**
+ * 置く操作中、紙を縮小して画面中央に置く倍率。
+ * iPad の全画面では紙のまわりに余白がほとんど無く、縮小しないとはみ出しを見せる場所が無い。
+ */
+const PLACE_PAPER_SCALE = 0.7;
+
+/** 置く操作中、紙の外へはみ出す部分の濃さの掛け率。「今は使われない部分」と分かればよい程度に薄く。 */
+const UNDERLAY_OUTSIDE_ALPHA_FACTOR = 0.25;
+
+/** 紙の角丸(.paper の border-radius)に合わせる。置く中の全画面 canvas でのクリップに使う。 */
+const PAPER_CORNER_RADIUS = 14;
 
 /** 描き終わってから保存するまでの待ち時間。描画中に保存すると重い。 */
 const AUTOSAVE_DELAY_MS = 800;
@@ -70,11 +126,21 @@ type ActiveTool = "pen" | "eraser" | "picker" | "fill";
 class App {
   private readonly root: HTMLElement;
   private readonly stage: HTMLElement;
+  /** 右上に浮かぶ 音/全画面/かくす/フィルタ をまとめる横並びコンテナ(詳細は style.css 側)。 */
+  private readonly stageToggles: HTMLElement;
   private readonly paperWrap: HTMLElement;
   private readonly gridLayer: HTMLElement;
   /** 写真の下敷きを描く専用キャンバス。紙のキャンバスには一切描かない(理由は buildStage 参照)。 */
   private readonly underlayCanvas: HTMLCanvasElement;
   private readonly underlayCtx: CanvasRenderingContext2D | null;
+  /**
+   * 置く操作中だけ出す、画面全体を覆う canvas。
+   * 写真を紙の外まで(はみ出し込みで)画面座標で描き、ドラッグ・ピンチもここで拾う
+   * (紙を縮小して中央に置くので、掴みたい写真が紙の外にあることが多いため)。
+   */
+  private readonly placeCanvas: HTMLCanvasElement;
+  private readonly placeCtx: CanvasRenderingContext2D | null;
+  private placeInput: PointerInputControl | null = null;
   /** 下敷き選択用の隠しファイル入力。DOM には置くが画面には出さない。 */
   private readonly underlayInput: HTMLInputElement;
   private readonly underlayStore: UnderlayStore = createUnderlayStore();
@@ -112,6 +178,31 @@ class App {
   private underlayStripScroll: HScrollControl | null = null;
   /** 帯のサムネイル用に発行した objectURL。作り直すたびに必ず revoke する(gallery.ts と同じ作法)。 */
   private underlayThumbUrls: string[] = [];
+  /** 濃さ3段階 + うごかす、の行。写真が選ばれている間だけ帯の下に出す。 */
+  private underlayOpacityRow!: HTMLElement;
+  /** 下敷きを「置く」状態。true の間は描かず、1本指ドラッグ/ピンチが下敷き専用になる。 */
+  private placingUnderlay = false;
+  /** 置く操作中、下敷きをドラッグしている指の pointerId(placeCanvas 側で拾う)。 */
+  private placeDragId: number | null = null;
+  /** 置く操作中の直前フレームの座標(キャンバス座標系)。差分でドラッグ量を出す。 */
+  private placeLastPoint: { x: number; y: number } | null = null;
+  private placeDoneButton: HTMLElement | null = null;
+  /**
+   * なぞった線と下敷きの写真を見比べるための「かくす/みせる」トグル。状態は保存しない。
+   * 隠したまま次に開くと「写真モードなのに何も出ない」という原因の分からない状態になる。
+   * 状態は保存せず、起動時は必ず見えている側から始める。
+   */
+  private underlayHiddenByUser = false;
+  private underlayToggleButton: HTMLElement | null = null;
+  /**
+   * 画面フィルタ(目の負担を減らす表示)。表示専用の層を紙・ツールバーの上に重ねるだけで、
+   * surface(絵そのもの)には一切触らない。「かくす」と違い状態は保存する(progress.ts 参照)。
+   */
+  private screenFilter: ScreenFilterMode = "normal";
+  private screenFilterButton: HTMLElement | null = null;
+  private screenFilterLayer!: HTMLElement;
+  /** 置く状態に入る前の view(ピンチの状態)。抜けるときに戻す。viewport.ts の view とは別系統。 */
+  private savedView: ViewTransform | null = null;
   private nib: NibId = "crayon";
   private strokeCount = 0;
   private pendingUnlock: Unlock | null = null;
@@ -131,6 +222,9 @@ class App {
   /** 紙の見え方(ピンチ拡大・移動)。描画内容には影響しない。 */
   private view: ViewTransform = IDENTITY;
 
+  /** 紙のキャンバス要素。置く操作中のピンチ(画面座標→キャンバス座標)の変換に使う。 */
+  private paperCanvas!: HTMLCanvasElement;
+
   private colorPanel!: Panel;
   private penPanel!: Panel;
   private eraserPanel!: Panel;
@@ -149,11 +243,13 @@ class App {
     this.underlayId = progress.underlayId;
     this.nib = progress.nib;
     this.multiDraw = progress.multiDraw;
+    this.screenFilter = progress.screenFilter;
 
     this.stage = document.createElement("div");
     this.stage.className = "stage";
     const canvas = document.createElement("canvas");
     canvas.className = "paper";
+    this.paperCanvas = canvas;
     // 方眼・写真の下敷きは「もう1枚の別レイヤー」であって絵そのものではない。
     // 紙のキャンバスには一切描かないので、こうすると PNG 書き出し(キャンバスのみ)にも
     // 作品の保存データ(surface の中身)にも入らない。
@@ -170,6 +266,21 @@ class App {
     this.underlayCtx = this.underlayCanvas.getContext("2d");
     this.paperWrap.append(canvas, this.gridLayer);
     this.stage.appendChild(this.paperWrap);
+
+    // 置く操作中だけ出す全画面 canvas。stage をそのまま覆う(ツールバーは stage の外なので塞がない)。
+    // paperWrap より後ろに足す(≒ 重なり順で上)ことで紙を隠して写真だけ画面座標で描く。
+    // ただしこの後に足すサウンド/全画面/ぜんぶ見る/これでいい のボタンより先に足すことで、
+    // それらは常にこの上に乗り、置く操作中も押せるままにする。
+    this.placeCanvas = document.createElement("canvas");
+    this.placeCanvas.className = "place-canvas";
+    this.placeCtx = this.placeCanvas.getContext("2d");
+    this.stage.appendChild(this.placeCanvas);
+
+    // 音/全画面/かくす/フィルタ の並び。表示・非表示が入れ替わる分は
+    // 座標ではなく並び(flex)で詰める(理由は style.css の .stage-toggles 参照)。
+    this.stageToggles = document.createElement("div");
+    this.stageToggles.className = "stage-toggles";
+    this.stage.appendChild(this.stageToggles);
 
     // 下敷き選択用の隠しファイル入力。写真を選ぶたびに開き直すのではなく、
     // 常に 1 つだけ用意して使い回す。
@@ -204,19 +315,35 @@ class App {
     this.paperWrap.insertBefore(this.underlayCanvas, this.gridLayer);
     this.guide = new GuideBubble(document.body);
 
+    // 画面フィルタの層。position: fixed で viewport を直接覆うので、transform を持つ
+    // 祖先(paperWrap の拡大縮小など)の影響を受けないよう stage ではなく body 直下に置く。
+    // pointer-events: none で操作は一切邪魔しない(style.css 側)。
+    this.screenFilterLayer = document.createElement("div");
+    this.screenFilterLayer.className = "screen-filter";
+    document.body.appendChild(this.screenFilterLayer);
+
     this.buildToolbarScroll();
     this.buildPanels();
     this.buildGallery();
     this.renderToolbar();
     this.buildSoundToggle();
     this.buildFullscreenToggle();
+    this.buildUnderlayToggle();
+    this.buildScreenFilterToggle();
     this.buildFitButton();
+    this.buildPlaceDoneButton();
     this.installInput(canvas);
     this.input?.setMultiDraw(this.multiDraw);
+    this.installPlaceInput();
     this.installWheelZoom(canvas);
+    // 置く中に端末を回転する等でも、はみ出しの見え方が画面に追随するようにする。
+    window.addEventListener("resize", () => {
+      if (this.placingUnderlay) this.drawPlaceCanvas();
+    });
     // PC のキーボードも一応拾う(タッチが主・マウス/キーは後追いという位置づけ)。
     window.addEventListener("keydown", (event) => {
-      if (this.multiDraw) return;
+      // 置く操作中に履歴が動くと混乱する(2本指タップの「もどる」と同じ理由で止める)。
+      if (this.multiDraw || this.placingUnderlay) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         // Shift+Ctrl+Z は「進む」。PC の一般的な作法に合わせる。
@@ -313,7 +440,10 @@ class App {
       button.append(icon, label);
       button.setAttribute("aria-label", plainText(def.label));
       button.addEventListener("click", () => {
-        panel.close();
+        // マスは選んで終わりではなく、その先に選択肢が続く(写真なら「どの写真」「濃さ」「動かす」)。
+        // 選んだ瞬間に、その選択で出てくるはずのものが入ったパネルが閉じてしまうのは噛み合わない。
+        // 見比べて決める種類の選択でもあるので、開いたまま切り替えられる方がよい。
+        // 色・ペン先・消しゴムは「選んだら次は描く」で終わりなので、今まで通り閉じる。
         if (id === "photo") {
           // 写真だけは特別扱い。下敷きが無ければまずファイルを選ばせる
           // (選ばれるまでは gridMode を変えないので、キャンセルされても
@@ -344,7 +474,70 @@ class App {
     this.underlayStrip.append(arrowLeft, this.underlayStripTrack, arrowRight);
     this.underlayStripScroll = installHScroll(this.underlayStripTrack, { left: arrowLeft, right: arrowRight });
     panel.element.appendChild(this.underlayStrip);
+    // 濃さ3段階 + うごかす。帯とおなじく flex-basis:100% で独立した行にする(CSS 側)。
+    panel.element.appendChild(this.createUnderlayOpacityRow());
     return panel;
+  }
+
+  /**
+   * 濃さ3段階(うすい/ふつう/こい) + うごかす、の行。
+   * .grid-panel の幅上限(404px)がちょうど 4 ボタン分の実測値なので、既存の
+   * なし/方眼/ビーズ/写真の行と同じ作り方(nib-button を並べるだけ)で 1 行に収まる。
+   */
+  private createUnderlayOpacityRow(): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "underlay-opacity-row";
+    for (const opacity of UNDERLAY_OPACITY_ORDER) {
+      const button = document.createElement("button");
+      button.className = "nib-button";
+      button.dataset.underlayOpacity = opacity;
+      const icon = document.createElement("span");
+      icon.className = "icon";
+      icon.innerHTML = underlayOpacityIconSvg(opacity);
+      const label = document.createElement("span");
+      label.className = "label";
+      label.appendChild(renderRuby(UNDERLAY_OPACITY_LABELS[opacity]));
+      button.append(icon, label);
+      button.setAttribute("aria-label", `こさ ${plainText(UNDERLAY_OPACITY_LABELS[opacity])}`);
+      button.addEventListener("click", () => this.setUnderlayOpacity(opacity));
+      row.appendChild(button);
+    }
+    const move = document.createElement("button");
+    move.className = "nib-button";
+    move.dataset.underlayMove = "true";
+    const moveIcon = document.createElement("span");
+    moveIcon.className = "icon";
+    moveIcon.innerHTML = MOVE_SVG;
+    const moveLabel = document.createElement("span");
+    moveLabel.className = "label";
+    moveLabel.appendChild(renderRuby(UNDERLAY_MOVE_LABEL));
+    move.append(moveIcon, moveLabel);
+    move.setAttribute("aria-label", `したじきを ${plainText(UNDERLAY_MOVE_LABEL)}`);
+    move.addEventListener("click", () => {
+      this.enterPlacingUnderlay();
+      this.sound.play("poko");
+    });
+    row.appendChild(move);
+    this.underlayOpacityRow = row;
+    return row;
+  }
+
+  /** 濃さを選ぶ。即座に反映しつつレコードにも保存する(既定は normal のまま)。 */
+  private setUnderlayOpacity(opacity: UnderlayOpacity): void {
+    if (this.underlayRecord === null) return;
+    this.underlayRecord = { ...this.underlayRecord, opacity };
+    this.drawUnderlay();
+    void this.underlayStore.put(this.underlayRecord);
+    this.sound.play("poko");
+  }
+
+  /** 濃さ行の表示・選択状態を揃える。写真が選ばれている間だけ出す。 */
+  private syncUnderlayOpacityRow(): void {
+    this.underlayOpacityRow.classList.toggle("is-visible", this.gridMode === "photo");
+    for (const element of this.underlayOpacityRow.querySelectorAll<HTMLElement>(".nib-button")) {
+      if (element.dataset.underlayOpacity === undefined) continue;
+      element.classList.toggle("is-active", element.dataset.underlayOpacity === this.underlayRecord?.opacity);
+    }
   }
 
   /**
@@ -497,14 +690,93 @@ class App {
   private buildFitButton(): void {
     const button = document.createElement("button");
     button.className = "fit-button";
-    button.innerHTML = `${FIT_SVG}<span>ぜんぶ</span>`;
+    button.innerHTML = FIT_SVG;
+    const label = document.createElement("span");
+    label.appendChild(renderRuby([{ base: "全部", ruby: "ぜんぶ" }]));
+    button.appendChild(label);
     button.setAttribute("aria-label", "ぜんぶ見る");
     button.addEventListener("click", () => {
       this.applyView(IDENTITY);
       this.sound.play("shu");
     });
-    this.stage.appendChild(button);
+    this.stageToggles.appendChild(button);
     this.fitButton = button;
+  }
+
+  /**
+   * なぞった線と下敷きの写真を見比べるための「かくす/みせる」トグル。全画面・音ボタンと
+   * 同じ並び(紙の右上)に置く。写真の下敷きが実際に表示されているときだけ出す
+   * (置く操作中は動かしている対象を隠す意味が無いので、その間も出さない)。
+   */
+  private buildUnderlayToggle(): void {
+    const button = document.createElement("button");
+    button.className = "sound-toggle underlay-toggle";
+    button.innerHTML = EYE_SVG;
+    button.setAttribute("aria-label", "かくす");
+    button.addEventListener("click", () => {
+      this.underlayHiddenByUser = !this.underlayHiddenByUser;
+      this.syncUnderlayToggle();
+      this.sound.play("poko");
+    });
+    this.stageToggles.appendChild(button);
+    this.underlayToggleButton = button;
+  }
+
+  /** 隠す/見せるボタンの表示・見た目・下敷き自体の表示/非表示を揃える。 */
+  private syncUnderlayToggle(): void {
+    const visible = this.gridMode === "photo" && this.underlayRecord !== null && !this.placingUnderlay;
+    this.underlayToggleButton?.classList.toggle("is-visible", visible);
+    if (this.underlayToggleButton !== null) {
+      this.underlayToggleButton.innerHTML = this.underlayHiddenByUser ? EYE_OFF_SVG : EYE_SVG;
+      this.underlayToggleButton.setAttribute("aria-label", this.underlayHiddenByUser ? "みせる" : "かくす");
+    }
+    // 濃さ・配置は underlayRecord 側の状態なので一切触らない。表示を止めるだけ。
+    this.underlayCanvas.classList.toggle("is-hidden-by-user", this.underlayHiddenByUser);
+  }
+
+  /**
+   * 下敷きを「置く」状態のあいだだけ出る「これでいい」。
+   * ツールバーの上あたり(指が届く位置)に置く。押すと置く状態を抜けて配置を保存する。
+   */
+  private buildPlaceDoneButton(): void {
+    const button = document.createElement("button");
+    button.className = "place-done-button";
+    button.textContent = "これでいい";
+    button.setAttribute("aria-label", "したじきの いちを けってい");
+    button.addEventListener("click", () => {
+      this.exitPlacingUnderlay();
+      this.sound.play("poko");
+    });
+    this.stage.appendChild(button);
+    this.placeDoneButton = button;
+  }
+
+  /**
+   * 画面フィルタ(目の負担を減らす表示)の切り替えボタン。全画面・音・かくすと同じ並び(紙の右上)。
+   * 押すたびに ふつう → やわらか → くらい → よる → ふつう … と一周する。
+   */
+  private buildScreenFilterToggle(): void {
+    const button = document.createElement("button");
+    button.className = "sound-toggle filter-toggle";
+    button.addEventListener("click", () => {
+      this.screenFilter = nextScreenFilter(this.screenFilter);
+      this.syncScreenFilter();
+      this.persistProgress();
+      this.sound.play("poko");
+    });
+    this.stageToggles.appendChild(button);
+    this.screenFilterButton = button;
+    this.syncScreenFilter();
+  }
+
+  /** 画面フィルタボタンの見た目と、実際に覆う層のクラスを今の段階に合わせる。 */
+  private syncScreenFilter(): void {
+    const def = SCREEN_FILTER_DEFS[this.screenFilter];
+    if (this.screenFilterButton !== null) {
+      this.screenFilterButton.innerHTML = def.icon;
+      this.screenFilterButton.setAttribute("aria-label", def.label);
+    }
+    this.screenFilterLayer.className = `screen-filter is-${this.screenFilter}`;
   }
 
   /**
@@ -528,7 +800,7 @@ class App {
     });
     // Esc やシステム側の操作で抜けたときも見た目を合わせる。
     onFullscreenChange(sync);
-    this.stage.appendChild(button);
+    this.stageToggles.appendChild(button);
   }
 
   private buildSoundToggle(): void {
@@ -542,18 +814,25 @@ class App {
       // 切った直後は鳴らない。切り替わったことは見た目で分かる。
       this.sound.play("poko");
     });
-    this.stage.appendChild(button);
+    this.stageToggles.appendChild(button);
   }
 
   private renderToolbar(): void {
     this.toolbar.textContent = "";
     this.buttons.clear();
-    for (const id of this.ownedTools) {
-      if (id === "done") continue; // 「かんせい！」は最後に置く
+    // 作品・完成は常に末尾固定(orderTools 参照)。宝箱は「まだ受け取っていない道具」を
+    // 示す一時的なボタンなので、固定末尾の手前(描く道具の続き)に置く。
+    const ordered = orderTools(this.ownedTools);
+    const trailingSet = new Set(TRAILING_TOOLS);
+    for (const id of ordered) {
+      if (trailingSet.has(id)) continue;
       this.toolbar.appendChild(this.createToolButton(id));
     }
     if (this.pendingUnlock !== null) this.toolbar.appendChild(this.createChestButton(this.pendingUnlock));
-    this.toolbar.appendChild(this.createToolButton("done"));
+    for (const id of ordered) {
+      if (!trailingSet.has(id)) continue;
+      this.toolbar.appendChild(this.createToolButton(id));
+    }
     this.syncActive();
     this.syncHistoryButtons();
     this.syncGridButtons();
@@ -755,6 +1034,8 @@ class App {
     }
     // gridMode が変わるたびに帯の表示・非表示も追従させる(ここが唯一の入口)。
     void this.refreshUnderlayStrip();
+    this.syncUnderlayOpacityRow();
+    this.syncUnderlayToggle();
   }
 
   // --- 写真の下敷き -------------------------------------------------------
@@ -776,6 +1057,9 @@ class App {
       // 取り込みが成功して初めて写真モードへ入る(失敗時は元のモードのまま)。setGridMode の中で
       // 帯も作り直される(プルーニング後の一覧を反映させたいので、ここより前ではなく後で呼ぶ)。
       this.setGridMode("photo");
+      // 取り込んだ直後はまだ位置が決まっていない(contain の中央寄せのまま)。
+      // 位置を決めたいはずなので、自動で「置く」状態に入る。
+      this.enterPlacingUnderlay();
       this.sound.play("poko");
     } catch (error) {
       const code = error instanceof UnderlayImportError ? error.code : null;
@@ -805,6 +1089,11 @@ class App {
     // 濃さは canvas に描き込まず CSS の opacity で載せる(差し替えのたびに再エンコードしなくて済む)。
     this.underlayCanvas.style.opacity = String(UNDERLAY_ALPHA[opacity]);
     this.underlayCtx.drawImage(this.underlayBitmap, placement.tx, placement.ty, width * placement.scale, height * placement.scale);
+    // 濃さ行の選択状態(is-active)は underlayRecord.opacity を見ているので、
+    // 描き直すたびに揃えておく(選び直し・置く操作での更新も含めて、ここが唯一の入口)。
+    this.syncUnderlayOpacityRow();
+    // 置く操作中は underlayCanvas を隠し、代わりに全画面の placeCanvas へ描く(二重に描かない)。
+    if (this.placingUnderlay) this.drawPlaceCanvas();
   }
 
   /**
@@ -898,6 +1187,182 @@ class App {
     active?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }
 
+  // --- 下敷きを「置く」(位置・大きさを指で決める) -------------------------
+
+  /**
+   * 「置く」状態に入る。画面全体(placeCanvas)でドラッグ・ピンチを拾って下敷きだけを動かし、
+   * 代わりに描く・紙のピンチ・2本指タップ(戻る)を止める(installInput 側の分岐)。
+   * 紙が見えないと位置を決められないので、マスのパネルは閉じる。
+   *
+   * 紙も 0.7 倍に縮めて画面中央へ寄せ、はみ出しを見せる余白を作る。この縮小は
+   * viewport.ts の view(ピンチの状態)とは別系統。いまの view を覚えておき、いったん
+   * 等倍へ戻してから縮小をかける(戻すときに view とちぐはぐにならないように)。
+   */
+  private enterPlacingUnderlay(): void {
+    if (this.underlayRecord === null) return;
+    this.placingUnderlay = true;
+    this.placeDragId = null;
+    this.placeLastPoint = null;
+    this.gridPanel.close();
+    this.savedView = this.view;
+    this.applyView(IDENTITY);
+    this.paperWrap.style.transformOrigin = "50% 50%";
+    this.paperWrap.style.transform = `scale(${PLACE_PAPER_SCALE})`;
+    this.syncPlacingUnderlay();
+    this.drawPlaceCanvas();
+  }
+
+  /** 「これでいい」で抜ける。抜けたときの配置を保存し、紙の大きさと view を元に戻す。 */
+  private exitPlacingUnderlay(): void {
+    if (!this.placingUnderlay) return;
+    this.placingUnderlay = false;
+    this.placeDragId = null;
+    this.placeLastPoint = null;
+    if (this.underlayRecord !== null) void this.underlayStore.put(this.underlayRecord);
+    this.paperWrap.style.transformOrigin = "";
+    const restore = this.savedView ?? IDENTITY;
+    this.savedView = null;
+    this.applyView(restore);
+    this.syncPlacingUnderlay();
+  }
+
+  /** 置く状態の見た目を揃える。紙側は隠し、代わりに全画面の placeCanvas を出す。 */
+  private syncPlacingUnderlay(): void {
+    this.underlayCanvas.classList.toggle("is-placing", this.placingUnderlay);
+    this.placeCanvas.classList.toggle("is-visible", this.placingUnderlay);
+    this.placeDoneButton?.classList.toggle("is-visible", this.placingUnderlay);
+    this.syncUnderlayToggle();
+  }
+
+  /** 1本指ドラッグぶんキャンバス座標のまま tx/ty に足す。point は既にキャンバス座標。 */
+  private moveUnderlayBy(dx: number, dy: number): void {
+    if (this.underlayRecord === null) return;
+    const { placement, width, height } = this.underlayRecord;
+    const moved = clampPlacement({ scale: placement.scale, tx: placement.tx + dx, ty: placement.ty + dy }, width, height);
+    this.underlayRecord = { ...this.underlayRecord, placement: moved };
+    this.drawUnderlay();
+  }
+
+  /**
+   * ピンチで下敷きを拡大縮小・平行移動する。
+   * change の中点・移動量は画面座標(px)なので、紙の実寸(getBoundingClientRect)から
+   * 画面px→キャンバスpxの比率を出して変換する(紙がピンチで拡大表示されていても狂わない)。
+   */
+  private applyUnderlayGesture(change: GestureChange): void {
+    if (this.underlayRecord === null) return;
+    const { placement, width, height } = this.underlayRecord;
+    const rect = this.paperCanvas.getBoundingClientRect();
+    const anchor = toCanvasPoint(change.centerX, change.centerY, rect, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const ratioX = rect.width > 0 ? CANVAS_WIDTH / rect.width : 1;
+    const ratioY = rect.height > 0 ? CANVAS_HEIGHT / rect.height : 1;
+    const scaled = scaleAt(placement, width, height, anchor.x, anchor.y, change.scaleFactor);
+    const moved = clampPlacement(
+      { scale: scaled.scale, tx: scaled.tx + change.dx * ratioX, ty: scaled.ty + change.dy * ratioY },
+      width,
+      height,
+    );
+    this.underlayRecord = { ...this.underlayRecord, placement: moved };
+    this.drawUnderlay();
+  }
+
+  /**
+   * 置く操作中、画面全体(placeCanvas)で 1 本指ドラッグ・ピンチを拾う。
+   * installPointerInput() は canvas.getBoundingClientRect() と canvas.width/height の比で
+   * 画面座標→CanvasPoint を作る。placeCanvas は resizePlaceCanvas() で幅高さを自分の
+   * 表示サイズちょうどに合わせているので、ここで受け取る point.x/y は
+   * 「placeCanvas 左上からのローカル座標(≒スクリーン座標)」になる ── 紙の canvas 前提の
+   * 変換ではない。紙のキャンバス座標(1748x1181)がほしいときは placeScreenToCanvas() で
+   * 改めて紙の実寸(paperCanvas.getBoundingClientRect())から自前で変換する。
+   * ピンチ(GestureChange)の dx/dy/centerX/centerY は pointerInput.ts 内部で常に生の
+   * clientX/clientY から作られるため、どの canvas で拾っても値は変わらず、
+   * applyUnderlayGesture() をそのまま使い回せる。
+   */
+  private installPlaceInput(): void {
+    this.placeInput = installPointerInput(this.placeCanvas, {
+      onDown: (id, point) => {
+        if (!this.placingUnderlay || this.placeDragId !== null) return;
+        this.placeDragId = id;
+        this.placeLastPoint = this.placeScreenToCanvas(point.x, point.y);
+      },
+      onMove: (id, point) => {
+        if (!this.placingUnderlay || id !== this.placeDragId || this.placeLastPoint === null) return;
+        const next = this.placeScreenToCanvas(point.x, point.y);
+        this.moveUnderlayBy(next.x - this.placeLastPoint.x, next.y - this.placeLastPoint.y);
+        this.placeLastPoint = next;
+      },
+      onUp: (id) => {
+        if (id !== this.placeDragId) return;
+        this.placeDragId = null;
+        this.placeLastPoint = null;
+      },
+      onGestureStart: () => {
+        // 2本目が触れたらドラッグは終わり、ここからはピンチ(onGestureChange)へ切り替わる。
+        this.placeDragId = null;
+        this.placeLastPoint = null;
+      },
+      onGestureChange: (change) => {
+        if (!this.placingUnderlay) return;
+        this.applyUnderlayGesture(change);
+      },
+    });
+  }
+
+  /** placeCanvas 上のローカル座標(≒スクリーン座標)を、紙の実寸から紙のキャンバス座標へ直す。 */
+  private placeScreenToCanvas(localX: number, localY: number): { x: number; y: number } {
+    const placeRect = this.placeCanvas.getBoundingClientRect();
+    const paperRect = this.paperCanvas.getBoundingClientRect();
+    return toCanvasPoint(placeRect.left + localX, placeRect.top + localY, paperRect, CANVAS_WIDTH, CANVAS_HEIGHT);
+  }
+
+  /** placeCanvas の実ピクセル数を、いまの表示サイズちょうどに合わせる(画面座標=キャンバス値にするため)。 */
+  private resizePlaceCanvas(): void {
+    const rect = this.stage.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    if (this.placeCanvas.width !== width) this.placeCanvas.width = width;
+    if (this.placeCanvas.height !== height) this.placeCanvas.height = height;
+  }
+
+  /**
+   * 置く操作中の全画面描画。写真の全体を画面座標で描き、紙の中に入る部分は今までどおりの濃さ、
+   * 紙の外にはみ出す部分はさらに薄く(UNDERLAY_OUTSIDE_ALPHA_FACTOR 掛け)描く。
+   * 紙の内と外は clip() で塗り分ける(同じ画像を 2 回描くだけで済む簡単な実装)。
+   */
+  private drawPlaceCanvas(): void {
+    if (this.placeCtx === null || this.underlayRecord === null || this.underlayBitmap === null) return;
+    this.resizePlaceCanvas();
+    const ctx = this.placeCtx;
+    const { placement, opacity, width, height } = this.underlayRecord;
+    const paperRect = this.paperCanvas.getBoundingClientRect();
+    const placeRect = this.placeCanvas.getBoundingClientRect();
+    // 紙の矩形を placeCanvas のローカル座標へ。
+    const paperLeft = paperRect.left - placeRect.left;
+    const paperTop = paperRect.top - placeRect.top;
+    const ratioX = CANVAS_WIDTH > 0 ? paperRect.width / CANVAS_WIDTH : 1;
+    const ratioY = CANVAS_HEIGHT > 0 ? paperRect.height / CANVAS_HEIGHT : 1;
+    const imgLeft = paperLeft + placement.tx * ratioX;
+    const imgTop = paperTop + placement.ty * ratioY;
+    const imgWidth = width * placement.scale * ratioX;
+    const imgHeight = height * placement.scale * ratioY;
+
+    ctx.clearRect(0, 0, this.placeCanvas.width, this.placeCanvas.height);
+
+    // まず画面全体へ薄く(紙の外へはみ出した部分はここだけが見える)。
+    ctx.save();
+    ctx.globalAlpha = UNDERLAY_ALPHA[opacity] * UNDERLAY_OUTSIDE_ALPHA_FACTOR;
+    ctx.drawImage(this.underlayBitmap, imgLeft, imgTop, imgWidth, imgHeight);
+    ctx.restore();
+
+    // 紙の内側だけ、今までどおりの濃さで重ね描き。
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(paperLeft, paperTop, paperRect.width, paperRect.height, PAPER_CORNER_RADIUS);
+    ctx.clip();
+    ctx.globalAlpha = UNDERLAY_ALPHA[opacity];
+    ctx.drawImage(this.underlayBitmap, imgLeft, imgTop, imgWidth, imgHeight);
+    ctx.restore();
+  }
+
   /**
    * 起動時の復元。gridMode が "photo" のときだけ underlayStore から読み直す。
    * レコードが見つからなくても起動自体は失敗させず、静かに "off" へ落とす。
@@ -960,6 +1425,10 @@ class App {
         this.eraserPanel.close();
         this.gridPanel.close();
 
+        // 置く操作中は紙に描かない。ドラッグ・ピンチは画面全体を覆う placeCanvas 側
+        // (installPlaceInput)が拾うので、ここでは何もしない。
+        if (this.placingUnderlay) return;
+
         if (this.activeTool === "picker") {
           // スポイトの道具で吸ったときは「吸ったら描ける」まで含めて 1 動作にする。
           if (this.pickColorAt(point.x, point.y)) this.setActiveTool("pen");
@@ -998,16 +1467,21 @@ class App {
         );
       },
       onMove: (id, point) => {
+        if (this.placingUnderlay) return;
         if (!this.lastPoints.has(id)) return;
         this.lastPoints.set(id, point);
         this.surface.extendStroke(id, point.x, point.y, point.time, point.pressure);
       },
       onGestureStart: (id) => {
+        if (this.placingUnderlay) return;
         // ピンチに移った瞬間、描きかけの線を捨てる(写真アプリの感覚で触った子を裏切らない)。
         if (id !== undefined) this.lastPoints.delete(id);
         this.surface.cancelStroke(id);
       },
       onGestureChange: (change) => {
+        // 置く操作中の紙のピンチ(見る操作)は止める。下敷き専用のピンチは
+        // placeCanvas 側(installPlaceInput)が拾うので、ここでは何もしない。
+        if (this.placingUnderlay) return;
         const next = zoomAt(
           panBy(this.view, change.dx, change.dy),
           this.layoutRect(),
@@ -1018,14 +1492,18 @@ class App {
         this.applyView(next);
       },
       onGestureEnd: () => {
+        if (this.placingUnderlay) return;
         this.scheduleSave();
       },
       onPick: (point) => {
+        if (this.placingUnderlay) return;
         // 右クリックは色を吸うだけ。道具は切り替えない
         // (描いている途中に色だけ変えたい、という使い方のため)。
         this.pickColorAt(point.x, point.y);
       },
       onTwoFingerTap: () => {
+        // 置く操作中に履歴が動くと混乱するので止める。
+        if (this.placingUnderlay) return;
         // 2 本指タップ = もどる。ツールバーまで指を運ばずに失敗を消せる。
         if (this.surface.undo()) {
           this.sound.play("shu");
@@ -1033,6 +1511,7 @@ class App {
         }
       },
       onUp: (id) => {
+        if (this.placingUnderlay) return;
         const last = this.lastPoints.get(id);
         if (last === undefined) return;
         this.lastPoints.delete(id);
@@ -1081,6 +1560,15 @@ class App {
       (event) => {
         event.preventDefault();
         if (this.multiDraw) return;
+        // 置く操作中は、紙と同じホイールの約束(ホイール=移動 / Ctrl(⌘)+ホイール=拡大)を
+        // 紙ではなく下敷きへ向け直す。紙自体はここで止め、動かさない(置く中の性質を壊さない)。
+        if (this.placingUnderlay) {
+          const factor = event.ctrlKey || event.metaKey ? Math.exp(-event.deltaY * 0.002) : 1;
+          const dx = event.ctrlKey || event.metaKey ? 0 : event.shiftKey ? -event.deltaY : -event.deltaX;
+          const dy = event.ctrlKey || event.metaKey ? 0 : event.shiftKey ? 0 : -event.deltaY;
+          this.applyUnderlayGesture({ scaleFactor: factor, dx, dy, centerX: event.clientX, centerY: event.clientY });
+          return;
+        }
         if (event.ctrlKey || event.metaKey) {
           const factor = Math.exp(-event.deltaY * 0.002);
           this.applyView(zoomAt(this.view, this.layoutRect(), event.clientX, event.clientY, factor));
@@ -1149,6 +1637,7 @@ class App {
       underlayId: this.underlayRecord?.id ?? null,
       nib: this.nib,
       multiDraw: this.multiDraw,
+      screenFilter: this.screenFilter,
     });
   }
 
@@ -1313,7 +1802,7 @@ class App {
       work = {
         ...work,
         updatedAt: now,
-        pages: [{ id: page?.id ?? "page-0", image: png }],
+        pages: [{ id: page?.id ?? "page-0", image: png, deleted: page?.deleted ?? false }],
         thumbnail,
       };
       // 「前に戻す」用の履歴。描いている間は数分おきに 1 件だけ積む(追記のみ)。

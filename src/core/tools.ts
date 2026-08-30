@@ -235,6 +235,29 @@ export const INITIAL_TOOLS: readonly ToolId[] = CHEST_ENABLED
 
 
 /**
+ * ツールバーの末尾に固定する道具。順に「作品」→「完成」。
+ *
+ * 描く道具は「絵に手を加えるもの」、作品と完成は「描き終わったあとの出口」。
+ * 出口が右端にまとまっていて位置が動かない方が、共用のタブレットでも指が場所を覚えられる。
+ * 宝箱で何が増えても、右端は 作品 → 完成 のまま変えない。
+ */
+export const TRAILING_TOOLS: readonly ToolId[] = ["works", "done"];
+
+/**
+ * 持っている道具を、TRAILING_TOOLS が必ず末尾に来るように並べ替える。
+ *
+ * - TRAILING_TOOLS 以外は元の順序を保つ(安定な並べ替え)。
+ * - TRAILING_TOOLS は、持っていれば TRAILING_TOOLS の順(works → done)で必ず最後に置く。
+ * - 持っていないものは出さない。
+ */
+export function orderTools(owned: readonly ToolId[]): ToolId[] {
+  const trailingSet = new Set(TRAILING_TOOLS);
+  const rest = owned.filter((id) => !trailingSet.has(id));
+  const trailing = TRAILING_TOOLS.filter((id) => owned.includes(id));
+  return [...rest, ...trailing];
+}
+
+/**
  * 今の描画量で新たに現れる宝箱を返す(まだ受け取っていないもののうち先頭 1 つ)。
  * 一度に複数出すと子どもが混乱するので、必ず 1 つずつ。
  */
