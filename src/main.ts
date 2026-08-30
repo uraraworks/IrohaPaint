@@ -10,6 +10,7 @@ import "./style.css";
 import { BEAD_COLORS, CRAYON_COLORS, ERASER_SIZES, nearestBeadColor, PEN_SIZES } from "./core/palette.ts";
 import { NIB_DEFS, NIB_ORDER, type NibId } from "./core/brush.ts";
 import { GRID_MODES, GRID_MODE_ORDER, type GridMode } from "./core/grid.ts";
+import { createPaperTexture, PAPER_KINDS, PAPER_KIND_ORDER, type PaperKind } from "./core/paper.ts";
 import {
   appendSnapshot,
   CANVAS_HEIGHT,
@@ -163,6 +164,20 @@ class App {
   private eraserSize = ERASER_SIZES[1] ?? 70;
   /** 下敷き。なし / 方眼 / ビーズ / 写真。ビーズはマスにしか置けなくなる。 */
   private gridMode: GridMode = "off";
+  /**
+   * 紙の種類(ふつう / わら半紙 / キャンバス)。マスとは独立した軸で、
+   * 「わら半紙の上に方眼」のように両方選べる(下敷きの帯とは別に常に出す行)。
+   */
+  private paperKind: PaperKind = "plain";
+  /** 紙の質感を描いた canvas。マスの下敷きレイヤーとは別に、乗算で重ねる専用の層。 */
+  private paperTextureCanvas!: HTMLCanvasElement;
+  private paperTextureCtx: CanvasRenderingContext2D | null = null;
+  /**
+   * 種類ごとのテクスチャの使い回し用キャッシュ。1748x1181 の生成は軽くないので、
+   * 紙を切り替えるたびに作り直さず、種類ごとに 1 回だけ createPaperTexture() を呼ぶ。
+   */
+  private readonly paperTextureCache = new Map<PaperKind, HTMLCanvasElement | OffscreenCanvas | null>();
+  private paperRow!: HTMLElement;
   /** 起動時に復元する下敷き ID(復元後は this.underlayRecord が正)。 */
   private underlayId: string | null = null;
   /** 選んでいる下敷き写真の実体。無ければ写真モードでも何も描かない。 */
@@ -269,6 +284,14 @@ class App {
     this.underlayCanvas.width = CANVAS_WIDTH;
     this.underlayCanvas.height = CANVAS_HEIGHT;
     this.underlayCtx = this.underlayCanvas.getContext("2d");
+    // 紙の質感の層。写真の下敷きと同じく実ピクセルを CANVAS_WIDTH x CANVAS_HEIGHT で作り
+    // CSS で紙と同じ大きさへ伸ばす。mix-blend-mode: multiply で重ねる(画面フィルタの
+    // 「よる」と同じ仕組み)。
+    this.paperTextureCanvas = document.createElement("canvas");
+    this.paperTextureCanvas.className = "paper-texture-layer";
+    this.paperTextureCanvas.width = CANVAS_WIDTH;
+    this.paperTextureCanvas.height = CANVAS_HEIGHT;
+    this.paperTextureCtx = this.paperTextureCanvas.getContext("2d");
     this.paperWrap.append(canvas, this.gridLayer);
     this.stage.appendChild(this.paperWrap);
 
@@ -315,8 +338,10 @@ class App {
     this.surface = new Surface(canvas);
     // 描いている最中の末尾を映す層(surface.ts の overlay)。方眼より下に敷く。
     this.paperWrap.insertBefore(this.surface.overlay, this.gridLayer);
-    // 重なり順: 紙 → 仮インク(overlay) → 下敷き写真 → 方眼。方眼はマス目の目安なので
-    // 常に一番上に見えていてほしい。
+    // 重なり順: 紙 → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → 方眼。方眼はマス目の
+    // 目安なので常に一番上に見えていてほしい。紙の質感は絵そのものの一部という位置づけで
+    // 下敷き(写真)より下、仮インクより上に置く。
+    this.paperWrap.insertBefore(this.paperTextureCanvas, this.gridLayer);
     this.paperWrap.insertBefore(this.underlayCanvas, this.gridLayer);
     this.guide = new GuideBubble(document.body);
 
@@ -395,6 +420,7 @@ class App {
     this.syncSizes();
     this.syncNibs();
     this.syncGridButtons();
+    this.syncPaperLayer();
 
     // パネル外タップで閉じる。
     document.addEventListener("pointerdown", (event) => {
@@ -428,9 +454,87 @@ class App {
     return swatches;
   }
 
-  /** 下敷きを選ぶパネル(なし / 方眼 / ビーズ)。将来のドット絵モードもここへ足す。 */
+  /**
+   * 紙の種類(ふつう / わら半紙 / キャンバス)を選ぶ行。マスの行とは別の段で常に出す
+   * (写真のときだけ出る帯・濃さの行とは違い、常に表示)。見た目・作り方はマスの行と
+   * 揃える(nib-button を並べるだけ)。
+   */
+  private createPaperRow(): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "paper-row";
+    for (const id of PAPER_KIND_ORDER) {
+      const def = PAPER_KINDS[id];
+      const button = document.createElement("button");
+      button.className = "nib-button";
+      button.dataset.paper = id;
+      const icon = document.createElement("span");
+      icon.className = "icon";
+      icon.innerHTML = def.iconSvg;
+      const label = document.createElement("span");
+      label.className = "label";
+      label.appendChild(renderRuby(def.label));
+      button.append(icon, label);
+      button.setAttribute("aria-label", plainText(def.label));
+      // 紙とマスは独立した軸。ここでは gridMode に一切触らないので、
+      // 「わら半紙の上に方眼」のように両方選べる。
+      button.addEventListener("click", () => {
+        this.setPaperKind(id);
+        this.sound.play(id === "plain" ? "shu" : "poko");
+      });
+      row.appendChild(button);
+    }
+    this.paperRow = row;
+    return row;
+  }
+
+  /** 紙の種類を切り替える。開いている作品にも記録して保存する。 */
+  private setPaperKind(kind: PaperKind): void {
+    this.paperKind = kind;
+    this.syncPaperLayer();
+    if (this.work !== null) {
+      this.work = { ...this.work, paperKind: kind, updatedAt: Date.now() };
+      void this.store.put(this.work);
+    }
+  }
+
+  /** 種類ごとのテクスチャを 1 回だけ作って使い回す(1748x1181 の生成は軽くないため)。 */
+  private getPaperTexture(kind: PaperKind): HTMLCanvasElement | OffscreenCanvas | null {
+    if (!this.paperTextureCache.has(kind)) {
+      this.paperTextureCache.set(kind, createPaperTexture(kind, CANVAS_WIDTH, CANVAS_HEIGHT));
+    }
+    return this.paperTextureCache.get(kind) ?? null;
+  }
+
+  /** 紙テクスチャの層と、紙の行のボタンの見た目(is-active)を現在の paperKind に揃える。 */
+  private syncPaperLayer(): void {
+    const texture = this.getPaperTexture(this.paperKind);
+    this.paperTextureCanvas.classList.toggle("is-on", texture !== null);
+    if (this.paperTextureCtx !== null) {
+      this.paperTextureCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      if (texture !== null) this.paperTextureCtx.drawImage(texture as CanvasImageSource, 0, 0);
+    }
+    for (const element of this.paperRow.querySelectorAll<HTMLElement>(".nib-button")) {
+      element.classList.toggle("is-active", element.dataset.paper === this.paperKind);
+    }
+  }
+
+  /** 開いている作品(this.work)の paperKind を this.paperKind・表示へ反映する。 */
+  private applyWorkPaper(): void {
+    this.paperKind = this.work?.paperKind ?? "plain";
+    this.syncPaperLayer();
+  }
+
+  /**
+   * 下敷きを選ぶパネル(なし / 方眼 / ビーズ)。将来のドット絵モードもここへ足す。
+   *
+   * 行の並びは 紙 → マス → (写真のときだけ)一覧 → 濃さ の順。紙はマスとは独立した軸
+   * (下敷きの帯と違って常に表示)なので、専用の行(createPaperRow)を別に持つ。
+   */
   private createGridPanel(): Panel {
     const panel = new Panel(document.body, "grid-panel");
+    panel.element.appendChild(this.createPaperRow());
+    const gridRow = document.createElement("div");
+    gridRow.className = "grid-mode-row";
     for (const id of GRID_MODE_ORDER) {
       const def = GRID_MODES[id];
       const button = document.createElement("button");
@@ -459,8 +563,9 @@ class App {
         this.setGridMode(id);
         this.sound.play(id === "off" ? "shu" : "poko");
       });
-      panel.element.appendChild(button);
+      gridRow.appendChild(button);
     }
+    panel.element.appendChild(gridRow);
     // 写真が選ばれている間だけ、取り込み済みの下敷きを選び直す帯を出す(refreshUnderlayStrip で中身を作る)。
     // パネルの flex-wrap を利用して独立した 1 行にするため CSS 側で flex-basis: 100% にしてある。
     // 帯自身は左右の送りボタンを乗せる外枠、実際にスクロールするのは中の underlayStripTrack。
@@ -1045,7 +1150,7 @@ class App {
     button?.classList.toggle("is-active", this.gridMode !== "off");
     const icon = button?.querySelector(".icon");
     if (icon != null) icon.innerHTML = GRID_MODES[this.gridMode].iconSvg;
-    for (const element of this.gridPanel.element.querySelectorAll<HTMLElement>(".nib-button")) {
+    for (const element of this.gridPanel.element.querySelectorAll<HTMLElement>(".grid-mode-row .nib-button")) {
       element.classList.toggle("is-active", element.dataset.grid === this.gridMode);
     }
     // gridMode が変わるたびに帯の表示・非表示も追従させる(ここが唯一の入口)。
@@ -1740,6 +1845,7 @@ class App {
     if (this.work?.id !== workId) {
       await this.save();
       this.work = work;
+      this.applyWorkPaper();
     }
     await this.captureSnapshot("revert");
     await this.surface.restoreFrom(image);
@@ -1761,6 +1867,7 @@ class App {
     if (work === null || work === undefined || image === undefined) return;
     await this.surface.restoreFrom(image);
     this.work = work;
+    this.applyWorkPaper();
     this.lastSnapshotAt = work.updatedAt;
     // ひらいた瞬間の姿を残す。この 1 枚が上書き事故の保険になる。
     await this.captureSnapshot("open");
@@ -1776,6 +1883,7 @@ class App {
     // 空の作品をこの場で作って開いた状態にする。
     // 「あたらしく かく」を押した時点で一覧に 1 枚増えていないと、描く前に閉じた子の絵が迷子になる。
     this.work = createWork(await this.surface.toPng(), Date.now(), await this.surface.toThumbnail());
+    this.applyWorkPaper();
     await this.store.put(this.work);
     this.lastSnapshotAt = this.work.updatedAt;
     this.persistProgress();
@@ -1802,6 +1910,7 @@ class App {
         if (image !== undefined) await this.surface.restoreFrom(image);
         this.work = next;
       }
+      this.applyWorkPaper();
       this.persistProgress();
       this.syncHistoryButtons();
     }
@@ -1861,6 +1970,7 @@ class App {
       if (latest === undefined || image === undefined) return;
       await this.surface.restoreFrom(image);
       this.work = latest;
+      this.applyWorkPaper();
       this.lastSnapshotAt = latest.updatedAt;
       this.syncHistoryButtons();
       // 起動して絵が出た時点も「ひらいた」に含める(別の子が使い始める入口はここ)。
@@ -1874,7 +1984,8 @@ class App {
     this.sound.play("fanfare");
     celebrate(this.stage);
     await this.save();
-    const png = await this.surface.toPng();
+    // 書き出し用は保存データと違い、紙の質感を焼き込む(surface.ts の toExportPng 参照)。
+    const png = await this.surface.toExportPng(this.getPaperTexture(this.paperKind));
     const url = URL.createObjectURL(png);
     const link = document.createElement("a");
     link.href = url;

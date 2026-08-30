@@ -780,6 +780,39 @@ export class Surface {
   }
 
   /**
+   * 「かんせい！」で書き出す PNG。紙の質感(texture)を乗算で焼き込む。
+   *
+   * 方眼やビーズは「目安」なので書き出しに入れないが、紙の質感は絵の一部であり、
+   * わら半紙に描いた絵が真っ白な PNG で出てきたら別の絵になってしまうので、
+   * こちらは焼き込む(下敷き全般とは扱いが逆になる。理由は上記の通り)。
+   *
+   * 保存される作品データ(IndexedDB の PNG、toPng() 側)にはテクスチャを焼き込まない。
+   * 焼き込むと後から紙を変えられなくなるうえ、変えるたびに二重に乗ってしまうため、
+   * 保存は常に素の絵のままにする。一覧用サムネイル(toThumbnail())も同じ理由で焼き込まない。
+   */
+  async toExportPng(texture: HTMLCanvasElement | OffscreenCanvas | null): Promise<Blob> {
+    const flat = document.createElement("canvas");
+    flat.width = CANVAS_WIDTH;
+    flat.height = CANVAS_HEIGHT;
+    const ctx = flat.getContext("2d");
+    if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
+    ctx.fillStyle = PAPER_COLOR;
+    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.drawImage(this.canvas, 0, 0);
+    if (texture !== null) {
+      ctx.globalCompositeOperation = "multiply";
+      ctx.drawImage(texture as CanvasImageSource, 0, 0);
+      ctx.globalCompositeOperation = "source-over";
+    }
+    return await new Promise<Blob>((resolve, reject) => {
+      flat.toBlob((blob) => {
+        if (blob === null) reject(new Error("PNG の生成に失敗しました"));
+        else resolve(blob);
+      }, "image/png");
+    });
+  }
+
+  /**
    * 一覧用の小さい PNG。原寸を並べると読み込みだけで重くなるので必ずこちらを使う。
    */
   async toThumbnail(maxWidth = 360): Promise<Blob> {

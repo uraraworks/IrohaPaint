@@ -2,6 +2,7 @@
 // Blob は IndexedDB がそのまま格納できる(structured clone)ので、
 // PNG を base64 化するような無駄な変換はしない。
 import { CANVAS_HEIGHT, CANVAS_WIDTH, SCHEMA_VERSION, type PageData, type WorkRecord } from "./model.ts";
+import { isPaperKind } from "./paper.ts";
 
 export interface StoredEnvelope {
   version: number;
@@ -85,11 +86,12 @@ function promisify<T>(request: IDBRequest<T>): Promise<T> {
 /**
  * バージョン不一致・壊れたレコードは無視する(復元に失敗しても起動はする)。
  *
- * canvasWidth/canvasHeight・pages[].deleted は後から足したフィールドなので、
+ * canvasWidth/canvasHeight・pages[].deleted・paperKind は後から足したフィールドなので、
  * 古い保存データには入っていない。SCHEMA_VERSION を上げて古い作品ごと捨てる
  * ようなことは絶対にしない(子どもの絵なので)。代わりにここで欠けている分だけ
- * 補う。今ある保存データは全部 CANVAS_WIDTH x CANVAS_HEIGHT で描かれたものなので、
+ * 補う。今ある保存データは全部 CANVAS_WIDTH x CANVAS_HEIGHT・"plain" で描かれたものなので、
  * その値で補って正しい。deleted も未指定なら「消していない」で正しい。
+ * paperKind は不正な値(壊れたデータ・型が合わないもの)でも "plain" に落とす。
  */
 export function unwrap(raw: unknown): WorkRecord | null {
   const envelope = raw as StoredEnvelope | undefined;
@@ -102,6 +104,7 @@ export function unwrap(raw: unknown): WorkRecord | null {
     ...work,
     canvasWidth: work.canvasWidth ?? CANVAS_WIDTH,
     canvasHeight: work.canvasHeight ?? CANVAS_HEIGHT,
+    paperKind: isPaperKind(work.paperKind) ? work.paperKind : "plain",
     pages: work.pages.map((page: PageData) => ({ ...page, deleted: page.deleted ?? false })),
   };
 }

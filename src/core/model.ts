@@ -16,6 +16,7 @@
 //     後から書き込めないので、今のうちから記録を始める。
 //   - ページにもソフトデリートを通す(deleted)。作品と同じ「本当には消さない」規則。
 import type { LabelPart } from "./tools.ts";
+import type { PaperKind } from "./paper.ts";
 
 /** 印刷(ポストカード 148x100mm / 300dpi)を見据えた固定キャンバスサイズ。横向き。 */
 export const CANVAS_WIDTH = 1748;
@@ -90,6 +91,13 @@ export interface WorkRecord {
    */
   canvasWidth: number;
   canvasHeight: number;
+  /**
+   * この作品が描かれた紙の種類(ふつう / わら半紙 / キャンバス)。
+   * canvasWidth/canvasHeight と全く同じ理由・作法で作品ごとに持つ(1 冊の中で
+   * 紙の種類が途中で変わることは無い前提)。古い保存データには無いフィールドなので、
+   * workStore.ts の unwrap() で読むときに欠けていたら "plain" を補う。
+   */
+  paperKind: PaperKind;
   /** 現在の中身。Phase 0 は常に 1 ページ。 */
   pages: PageData[];
   /**
@@ -174,6 +182,7 @@ export function createWork(
   thumbnail?: Blob,
   canvasWidth: number = CANVAS_WIDTH,
   canvasHeight: number = CANVAS_HEIGHT,
+  paperKind: PaperKind = "plain",
 ): WorkRecord {
   return {
     id: createId("work"),
@@ -183,6 +192,7 @@ export function createWork(
     deleted: false,
     canvasWidth,
     canvasHeight,
+    paperKind,
     ...(thumbnail === undefined ? {} : { thumbnail }),
     pages: [{ id: createId("page"), image, deleted: false }],
     snapshots: [],

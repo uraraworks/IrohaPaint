@@ -175,6 +175,28 @@ body {
 }
 
 /*
+ * 紙の質感の層。写真の下敷きと同じ実ピクセル(CANVAS_WIDTH x CANVAS_HEIGHT)で作り
+ * CSS で紙と同じ大きさへ伸ばす。mix-blend-mode: multiply で重ねる(画面フィルタの
+ * 「よる」と同じ仕組み)。方眼・写真とは違い「絵そのものの一部」という位置づけなので、
+ * 下敷き(写真)より下・仮インクより上に置く(main.ts の insertBefore 参照)。
+ * plain(ふつう)のときは texture が無いので is-on が付かず、何も出ない。
+ */
+.paper-texture-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  border-radius: 14px;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+
+.paper-texture-layer.is-on {
+  display: block;
+}
+
+/*
  * 置く操作中だけ出る全画面 canvas。写真の全体を画面座標で描き、紙の外へはみ出した
  * 部分もここでだけ見える(はみ出し=写真の続きがある、という手がかり)。
  * ドラッグ・ピンチもここで拾う(installPlaceInput)。
@@ -679,6 +701,20 @@ ruby > rt {
 .grid-panel {
   gap: 12px;
   max-width: min(calc(100vw - 24px), 404px);
+}
+
+/*
+ * 紙(ふつう/わら半紙/キャンバス)の行と、マス(なし/方眼/ビーズ/写真)の行。
+ * どちらも中身は 3〜4 個の nib-button で、.underlay-strip / .underlay-opacity-row と
+ * 同じ理由(.grid-panel の flex-wrap を使って独立した 1 行にする)で flex-basis: 100%
+ * にする。紙とマスは互いに独立した軸なので、どちらの行も同時に選択状態を持てる。
+ */
+.paper-row,
+.grid-mode-row {
+  display: flex;
+  flex-basis: 100%;
+  gap: 12px;
+  justify-content: center;
 }
 
 /*

@@ -38,6 +38,11 @@ describe("作品データモデル", () => {
     expect(work.canvasHeight).toBe(1748);
   });
 
+  it("新規作品は紙の種類 plain(ふつう)で始まる", () => {
+    const work = createWork(dummy, 1000);
+    expect(work.paperKind).toBe("plain");
+  });
+
   it("新規ページは deleted:false で始まる", () => {
     const work = createWork(dummy, 1000);
     expect(work.pages[0]?.deleted).toBe(false);
@@ -149,13 +154,14 @@ describe("workStore の unwrap(古い保存データの読み込み)", () => {
     expect(restored).not.toBeNull();
     expect(restored?.canvasWidth).toBe(CANVAS_WIDTH);
     expect(restored?.canvasHeight).toBe(CANVAS_HEIGHT);
+    expect(restored?.paperKind).toBe("plain");
     expect(restored?.pages[0]?.deleted).toBe(false);
     // 元の中身(画像など)はそのまま保たれる
     expect(restored?.pages[0]?.id).toBe("page-legacy");
   });
 
   it("新しい形のデータはそのまま(既定値で上書きしない)", () => {
-    const work = createWork(dummy, 1000, undefined, 1181, 1748);
+    const work = createWork(dummy, 1000, undefined, 1181, 1748, "canvas");
     const withDeletedPage: WorkRecord = {
       ...work,
       pages: [{ ...work.pages[0]!, deleted: true }],
@@ -166,7 +172,19 @@ describe("workStore の unwrap(古い保存データの読み込み)", () => {
 
     expect(restored?.canvasWidth).toBe(1181);
     expect(restored?.canvasHeight).toBe(1748);
+    expect(restored?.paperKind).toBe("canvas");
     expect(restored?.pages[0]?.deleted).toBe(true);
+  });
+
+  it("不正な paperKind は plain に落として読み込む(壊れたデータでも捨てない)", () => {
+    const work = createWork(dummy, 1000);
+    const brokenPaperKind = { ...work, paperKind: "washi" } as unknown as WorkRecord;
+    const envelope: StoredEnvelope = { version: SCHEMA_VERSION, work: brokenPaperKind };
+
+    const restored = unwrap(envelope);
+
+    expect(restored).not.toBeNull();
+    expect(restored?.paperKind).toBe("plain");
   });
 
   it("バージョン不一致は読み込まない(壊れたデータで起動しない)", () => {
