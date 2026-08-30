@@ -26,7 +26,18 @@ import { importUnderlay, UnderlayImportError, type UnderlayImportErrorCode } fro
 import { createUnderlayStore, pruneUnderlays, type UnderlayStore } from "./core/underlayStore.ts";
 import { hexToRgba, Surface } from "./core/surface.ts";
 import { installPointerInput, toCanvasPoint, type GestureChange, type PointerInputControl } from "./core/pointerInput.ts";
-import { clampView, IDENTITY, MIN_SCALE, panBy, toCss, zoomAt, type Rect, type ViewTransform } from "./core/viewport.ts";
+import {
+  clampView,
+  IDENTITY,
+  isFullyVisible,
+  MIN_SCALE,
+  panBy,
+  toCss,
+  visibleRect,
+  zoomAt,
+  type Rect,
+  type ViewTransform,
+} from "./core/viewport.ts";
 import {
   CHEST_ICON_SVG,
   INITIAL_TOOLS,
@@ -259,6 +270,24 @@ class App {
   /** 紙の見え方(ピンチ拡大・移動)。描画内容には影響しない。 */
   private view: ViewTransform = IDENTITY;
 
+  /**
+   * 全体図(ミニマップ)。紙の位置/大きさが変わっている間だけ、いま画面のどこを
+   * 見ているかを示す。スマホ標準のスクロールバーと同じ考え方(動かした時だけ出て、
+   * 止まったら消える)。押せると事故が起きるので pointer-events: none(style.css 側)。
+   */
+  private minimap!: HTMLElement;
+  private minimapCanvas!: HTMLCanvasElement;
+  private minimapCtx: CanvasRenderingContext2D | null = null;
+  private minimapViewportBox!: HTMLElement;
+  private minimapVisible = false;
+  private minimapHideTimer: number | null = null;
+  /**
+   * applyInitialView() が構築中に1回目の applyView() を呼ぶ。この最初の1回は
+   * 「起動しただけ」であって「動かした」ではないので、全体図を出す対象から除く。
+   * コンストラクタの最後(applyInitialView 呼び出し後)に true にする。
+   */
+  private minimapArmed = false;
+
   /** 紙のキャンバス要素。置く操作中のピンチ(画面座標→キャンバス座標)の変換に使う。 */
   private paperCanvas!: HTMLCanvasElement;
 
@@ -326,6 +355,21 @@ class App {
     this.stageToggles = document.createElement("div");
     this.stageToggles.className = "stage-toggles";
     this.stage.appendChild(this.stageToggles);
+
+    // 全体図(ミニマップ)。右上は stage-toggles(音/全画面/かくす/フィルタ/ぜんぶ見る)が
+    // 並ぶので、左上に置く。押せると描画中の事故になるので pointer-events: none。
+    this.minimap = document.createElement("div");
+    this.minimap.className = "minimap";
+    this.minimapCanvas = document.createElement("canvas");
+    this.minimapCanvas.className = "minimap-canvas";
+    // 紙の比率(1748x1181)を保ったまま横 120px 程度。
+    this.minimapCanvas.width = 120;
+    this.minimapCanvas.height = Math.round((120 * CANVAS_HEIGHT) / CANVAS_WIDTH);
+    this.minimapCtx = this.minimapCanvas.getContext("2d");
+    this.minimapViewportBox = document.createElement("div");
+    this.minimapViewportBox.className = "minimap-viewport";
+    this.minimap.append(this.minimapCanvas, this.minimapViewportBox);
+    this.stage.appendChild(this.minimap);
 
     // 下敷き選択用の隠しファイル入力。写真を選ぶたびに開き直すのではなく、
     // 常に 1 つだけ用意して使い回す。
@@ -396,6 +440,9 @@ class App {
     window.addEventListener("orientationchange", () => this.applyInitialView());
     // ここまででレイアウトに要る要素は揃っているので、最初の見え方を決める。
     this.applyInitialView();
+    // ここから先の applyView() だけを「動かした」とみなし、全体図の対象にする
+    // (起動直後にいきなり出るのを防ぐ)。
+    this.minimapArmed = true;
     // PC のキーボードも一応拾う(タッチが主・マウス/キーは後追いという位置づけ)。
     window.addEventListener("keydown", (event) => {
       // 置く操作中に履歴が動くと混乱する(2本指タップの「もどる」と同じ理由で止める)。
@@ -1787,6 +1834,62 @@ class App {
     this.paperWrap.style.transform = toCss(this.view);
     // 紙が全部見えていないときだけ「ぜんぶ見る」を出す(スマホでは常に出る)。
     this.fitButton?.classList.toggle("is-visible", this.view.scale > 1.02);
+    // 起動直後の1回目(まだ「動かした」わけではない)は全体図の対象にしない。
+    if (this.minimapArmed) this.updateMinimap();
+  }
+
+  /**
+   * 全体図(ミニマップ)を更新する。紙の位置/大きさが変わるたびに呼ばれる想定。
+   * - 紙が全部見えている状態になったら、示すことが無いので即座に隠す(出ている途中でも消す)。
+   * - 出た瞬間(隠れている→見せる)だけ絵を描き直す(毎フレーム描き直さない)。
+   * - 「見えている範囲」の枠は毎回動かす。
+   * - 動きが止まってから 2 秒でフェードアウトする(タイマーは動くたびに延びる)。
+   * 紙が全部見えている状態が続く(=タブレットでの既定)場合は動きが起きないので、
+   * 結果として全体図も出ない。
+   */
+  private updateMinimap(): void {
+    if (isFullyVisible(visibleRect(this.view, this.layoutRect(), this.stageRect()))) {
+      if (this.minimapHideTimer !== null) {
+        window.clearTimeout(this.minimapHideTimer);
+        this.minimapHideTimer = null;
+      }
+      this.minimapVisible = false;
+      this.minimap.classList.remove("is-visible");
+      return;
+    }
+    if (!this.minimapVisible) {
+      this.minimapVisible = true;
+      this.minimap.classList.add("is-visible");
+      this.drawMinimapThumbnail();
+    }
+    this.positionMinimapViewportBox();
+    if (this.minimapHideTimer !== null) window.clearTimeout(this.minimapHideTimer);
+    this.minimapHideTimer = window.setTimeout(() => {
+      this.minimapVisible = false;
+      this.minimap.classList.remove("is-visible");
+      this.minimapHideTimer = null;
+    }, 2000);
+  }
+
+  /** いまの絵(紙のキャンバスの中身)を全体図に縮小して描く。drawImage 1回だけ。 */
+  private drawMinimapThumbnail(): void {
+    if (this.minimapCtx === null) return;
+    const ctx = this.minimapCtx;
+    const { width, height } = this.minimapCanvas;
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "#fffdf7";
+    ctx.fillRect(0, 0, width, height);
+    ctx.drawImage(this.paperCanvas, 0, 0, width, height);
+  }
+
+  /** 「いま画面に見えている範囲」の枠を、紙全体を表す全体図の中の割合の位置へ動かす。 */
+  private positionMinimapViewportBox(): void {
+    const rect = visibleRect(this.view, this.layoutRect(), this.stageRect());
+    const box = this.minimapViewportBox;
+    box.style.left = `${rect.x * 100}%`;
+    box.style.top = `${rect.y * 100}%`;
+    box.style.width = `${rect.w * 100}%`;
+    box.style.height = `${rect.h * 100}%`;
   }
 
   /** 「画面(描画領域)」= 紙を切り取る枠(.stage)の、今の矩形。 */

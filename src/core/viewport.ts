@@ -92,6 +92,48 @@ function clampAxis(
   return clamp(t, minT, maxT);
 }
 
+/** 紙全体に対する「いま画面(viewport)に見えている範囲」。0..1 の割合(x,y,w,h)で表す。 */
+export interface VisibleRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * 全体図(ミニマップ)用。紙のどこが画面に見えているかを、紙全体を 1 として割合で返す。
+ * layout / viewport は clampView と同じく変換前(scale=1)の矩形。
+ *
+ * 紙は clampView によって画面の外へ隙間なく飛び出す位置には来ない前提だが、
+ * 呼び出し側の丸め誤差等で多少はみ出しても 0..1 に収まるようクランプする。
+ */
+export function visibleRect(view: ViewTransform, layout: Rect, viewport: Rect): VisibleRect {
+  const paperLeft = layout.left + view.tx;
+  const paperTop = layout.top + view.ty;
+  const paperWidth = layout.width * view.scale;
+  const paperHeight = layout.height * view.scale;
+
+  if (paperWidth <= 0 || paperHeight <= 0) return { x: 0, y: 0, w: 1, h: 1 };
+
+  const visLeft = clamp(viewport.left, paperLeft, paperLeft + paperWidth);
+  const visRight = clamp(viewport.left + viewport.width, paperLeft, paperLeft + paperWidth);
+  const visTop = clamp(viewport.top, paperTop, paperTop + paperHeight);
+  const visBottom = clamp(viewport.top + viewport.height, paperTop, paperTop + paperHeight);
+
+  const x = clamp((visLeft - paperLeft) / paperWidth, 0, 1);
+  const y = clamp((visTop - paperTop) / paperHeight, 0, 1);
+  const w = clamp((visRight - visLeft) / paperWidth, 0, 1 - x);
+  const h = clamp((visBottom - visTop) / paperHeight, 0, 1 - y);
+
+  return { x, y, w, h };
+}
+
+/** 紙が(誤差程度を除いて)画面に全部見えているか。全体図を出す必要が無い状態。 */
+export function isFullyVisible(rect: VisibleRect): boolean {
+  const EPS = 1e-3;
+  return rect.x <= EPS && rect.y <= EPS && rect.w >= 1 - EPS && rect.h >= 1 - EPS;
+}
+
 export function toCss(view: ViewTransform): string {
   return `translate(${view.tx}px, ${view.ty}px) scale(${view.scale})`;
 }

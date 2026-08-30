@@ -356,6 +356,44 @@ body {
  * まとめてあるので、これも個別の position/right を持たずそこに並べる
  * (でないと出したときに他のボタンと重なる)。文字が入る分だけ他より横幅が広い。
  */
+/*
+ * 全体図(ミニマップ)。紙の位置/大きさが変わっている間だけ出す、スマホのスクロール
+ * バーと同じ考え方の表示。右上は stage-toggles(音/全画面/かくす/フィルタ/ぜんぶ見る)
+ * が並ぶので、左上に置く。押せると描いている最中に触れて絵が動く事故になるので
+ * pointer-events: none(子要素にも効く)。
+ */
+.minimap {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  width: 120px;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.minimap.is-visible {
+  opacity: 1;
+}
+
+.minimap-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: var(--paper);
+}
+
+/* 「いま画面に見えている範囲」の枠。全体図の中の割合(0..100%)で位置/大きさを決める。 */
+.minimap-viewport {
+  position: absolute;
+  border: 2px solid rgba(255, 90, 90, 0.9);
+  background: rgba(255, 90, 90, 0.12);
+  box-sizing: border-box;
+}
+
 .fit-button {
   display: none;
   flex-direction: column;

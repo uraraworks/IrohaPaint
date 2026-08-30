@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { clampView, IDENTITY, MAX_SCALE, panBy, zoomAt } from "../src/core/viewport.ts";
+import {
+  clampView,
+  IDENTITY,
+  isFullyVisible,
+  MAX_SCALE,
+  panBy,
+  visibleRect,
+  zoomAt,
+} from "../src/core/viewport.ts";
 
 const layout = { left: 100, top: 50, width: 800, height: 540 };
 
@@ -76,5 +84,67 @@ describe("clampView", () => {
     expect(rightEdge).toBeGreaterThanOrEqual(viewport.width - 0.001);
     // 紙の左端は画面の左端より右には来ない。
     expect(tabletLayout.left + view.tx).toBeLessThanOrEqual(0.001);
+  });
+});
+
+describe("visibleRect / isFullyVisible", () => {
+  // タブレット相当: 紙(800x540)が画面(1000x700)に収まる。
+  const tabletViewport = { left: 0, top: 0, width: 1000, height: 700 };
+  const tabletLayout = {
+    left: (tabletViewport.width - layout.width) / 2,
+    top: (tabletViewport.height - layout.height) / 2,
+    width: layout.width,
+    height: layout.height,
+  };
+
+  it("紙が全部見えているとき、見えている範囲が 0,0,1,1 になる", () => {
+    const rect = visibleRect(IDENTITY, tabletLayout, tabletViewport);
+    expect(rect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+    expect(isFullyVisible(rect)).toBe(true);
+  });
+
+  it("拡大して中央にいるとき、範囲が中央の一部になる", () => {
+    // スマホ相当: 紙(800x540)を2倍(1600x1080)、画面(390x700)より大きい。
+    // ちょうど中央に来る tx/ty を計算する(紙の中心 = 画面の中心)。
+    const scale = 2;
+    const viewport = { left: 0, top: 0, width: 390, height: 700 };
+    const paperCenterX = layout.left + (layout.width * scale) / 2;
+    const paperCenterY = layout.top + (layout.height * scale) / 2;
+    const viewportCenterX = viewport.left + viewport.width / 2;
+    const viewportCenterY = viewport.top + viewport.height / 2;
+    const view = {
+      scale,
+      tx: viewportCenterX - paperCenterX,
+      ty: viewportCenterY - paperCenterY,
+    };
+    const clamped = clampView(view, layout, viewport);
+    const rect = visibleRect(clamped, layout, viewport);
+
+    // 中央に来ているので、見えている範囲の中心は紙の中心(0.5, 0.5)に一致する。
+    expect(rect.x + rect.w / 2).toBeCloseTo(0.5, 5);
+    expect(rect.y + rect.h / 2).toBeCloseTo(0.5, 5);
+    // 横幅は画面(390)/紙の実寸(800*2=1600)分だけ見えている。
+    expect(rect.w).toBeCloseTo(390 / 1600, 5);
+    // 縦は画面(700)のほうが紙の実寸(540*2=1080)より小さいので一部だけ。
+    expect(rect.h).toBeCloseTo(700 / 1080, 5);
+    expect(isFullyVisible(rect)).toBe(false);
+  });
+
+  it("端まで寄せたとき、範囲が 0 側/1 側に張り付き、はみ出さない", () => {
+    const scale = 2;
+    const viewport = { left: 0, top: 0, width: 390, height: 700 };
+    // 右へ思い切り動かす(紙の左側が見える状態)→ clampView で隙間なしに丸められる。
+    const rightmost = clampView({ scale, tx: 99999, ty: 0 }, layout, viewport);
+    const rectRight = visibleRect(rightmost, layout, viewport);
+    expect(rectRight.x).toBeCloseTo(0, 5);
+    expect(rectRight.x).toBeGreaterThanOrEqual(0);
+    expect(rectRight.x + rectRight.w).toBeLessThanOrEqual(1 + 1e-9);
+
+    // 左へ思い切り動かす(紙の右側が見える状態)。
+    const leftmost = clampView({ scale, tx: -99999, ty: 0 }, layout, viewport);
+    const rectLeft = visibleRect(leftmost, layout, viewport);
+    expect(rectLeft.x + rectLeft.w).toBeCloseTo(1, 5);
+    expect(rectLeft.x).toBeGreaterThanOrEqual(0);
+    expect(rectLeft.x + rectLeft.w).toBeLessThanOrEqual(1 + 1e-9);
   });
 });
