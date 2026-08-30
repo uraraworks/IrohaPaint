@@ -45,7 +45,7 @@ import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
 import { Gallery } from "./ui/gallery.ts";
-import { installHScroll, type HScrollArrows, type HScrollControl } from "./ui/hscroll.ts";
+import { installHScroll, makeHScrollPanelRow, type HScrollControl } from "./ui/hscroll.ts";
 import {
   CHEVRON_LEFT_SVG,
   CHEVRON_RIGHT_SVG,
@@ -400,7 +400,6 @@ class App {
     // ページ拡大の入口である Safari 独自の gesture イベントを止める。
     // 一度ページが拡大されると指の位置と描画位置がずれ、操作全体が壊れるため。
     // (紙のピンチ・下敷きを置く操作のピンチは pointer events で実装されているので影響しない)
-    if (false) {
     const blockGesture = (event: Event) => event.preventDefault();
     document.addEventListener("gesturestart", blockGesture, { passive: false });
     document.addEventListener("gesturechange", blockGesture, { passive: false });
@@ -412,7 +411,6 @@ class App {
       },
       { passive: false },
     );
-    }
     void this.restore();
     void this.restoreUnderlay();
     void this.refreshHasUnderlays();
@@ -500,6 +498,11 @@ class App {
   private createPaperRow(): HTMLElement {
     const row = document.createElement("div");
     row.className = "paper-row";
+    // ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+    // 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない
+    // (makeHScrollPanelRow のコメント参照。溢れている行が複数あると送りボタンが
+    // 縦に並んでしまうため、端をぼかして先があることだけ示す)。
+    const { track } = makeHScrollPanelRow(row);
     for (const id of PAPER_KIND_ORDER) {
       const def = PAPER_KINDS[id];
       const button = document.createElement("button");
@@ -519,7 +522,7 @@ class App {
         this.setPaperKind(id);
         this.sound.play(id === "plain" ? "shu" : "poko");
       });
-      row.appendChild(button);
+      track.appendChild(button);
     }
     this.paperRow = row;
     return row;
@@ -573,6 +576,11 @@ class App {
     panel.element.appendChild(this.createPaperRow());
     const gridRow = document.createElement("div");
     gridRow.className = "grid-mode-row";
+    // ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+    // 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない
+    // (makeHScrollPanelRow のコメント参照。溢れている行が複数あると送りボタンが
+    // 縦に並んでしまうため、端をぼかして先があることだけ示す)。
+    const { track: gridTrack } = makeHScrollPanelRow(gridRow);
     for (const id of GRID_MODE_ORDER) {
       const def = GRID_MODES[id];
       const button = document.createElement("button");
@@ -619,7 +627,7 @@ class App {
         this.setGridMode(id);
         this.sound.play(id === "off" ? "shu" : "poko");
       });
-      gridRow.appendChild(button);
+      gridTrack.appendChild(button);
     }
     panel.element.appendChild(gridRow);
     // 写真が選ばれている間だけ、取り込み済みの下敷きを選び直す帯を出す(refreshUnderlayStrip で中身を作る)。
@@ -653,6 +661,11 @@ class App {
   private createUnderlayOpacityRow(): HTMLElement {
     const row = document.createElement("div");
     row.className = "underlay-opacity-row";
+    // ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+    // 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない
+    // (makeHScrollPanelRow のコメント参照。溢れている行が複数あると送りボタンが
+    // 縦に並んでしまうため、端をぼかして先があることだけ示す)。
+    const { track } = makeHScrollPanelRow(row);
     for (const opacity of UNDERLAY_OPACITY_ORDER) {
       const button = document.createElement("button");
       button.className = "nib-button";
@@ -666,7 +679,7 @@ class App {
       button.append(icon, label);
       button.setAttribute("aria-label", `こさ ${plainText(UNDERLAY_OPACITY_LABELS[opacity])}`);
       button.addEventListener("click", () => this.setUnderlayOpacity(opacity));
-      row.appendChild(button);
+      track.appendChild(button);
     }
     const move = document.createElement("button");
     move.className = "nib-button";
@@ -683,7 +696,7 @@ class App {
       this.enterPlacingUnderlay();
       this.sound.play("poko");
     });
-    row.appendChild(move);
+    track.appendChild(move);
     this.underlayOpacityRow = row;
     return row;
   }
@@ -742,6 +755,11 @@ class App {
   private createNibRow(): HTMLElement {
     const row = document.createElement("div");
     row.className = "nib-row";
+    // ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+    // 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない
+    // (makeHScrollPanelRow のコメント参照。溢れている行が複数あると送りボタンが
+    // 縦に並んでしまうため、端をぼかして先があることだけ示す)。
+    const { track } = makeHScrollPanelRow(row);
     for (const id of NIB_ORDER) {
       const def = NIB_DEFS[id];
       const button = document.createElement("button");
@@ -762,7 +780,7 @@ class App {
         this.persistProgress();
         this.sound.play("poko");
       });
-      row.appendChild(button);
+      track.appendChild(button);
     }
     return row;
   }
@@ -783,6 +801,11 @@ class App {
     // 太さは 1 行に並べる(ペン先の段と積み重ねるため、行を箱に入れておく)。
     const row = document.createElement("div");
     row.className = "size-row";
+    // ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+    // 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない
+    // (makeHScrollPanelRow のコメント参照。溢れている行が複数あると送りボタンが
+    // 縦に並んでしまうため、端をぼかして先があることだけ示す)。
+    const { track } = makeHScrollPanelRow(row);
     for (const size of sizes) {
       const button = document.createElement("button");
       button.className = "size-button";
@@ -801,7 +824,7 @@ class App {
         this.syncSizes();
         panel.close();
       });
-      row.appendChild(button);
+      track.appendChild(button);
     }
     panel.element.appendChild(row);
     return panel;

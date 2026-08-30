@@ -720,22 +720,84 @@ ruby > rt {
 }
 
 /*
+ * パネル内の行(ペン先・太さ・紙・マス・濃さ)の中で実際に横スクロールする中身。
+ * makeHScrollPanelRow(src/ui/hscroll.ts)が各行の外枠(.nib-row 等)へ差し込む。
+ * ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+ * 縦に伸び、狭い画面では選ぶために絵が見えなくなる。
+ *
+ * 送りボタンは付けない。溢れている行が複数あると送りボタンが縦に並び、繰り返しの
+ * 要素が不具合のように見える。パネルの行は隠れている量が少ない(4 個中 3 個が
+ * 見えている)ので、端をぼかして切れているものを覗かせれば「まだ先がある」は伝わる。
+ * ツールバーは 11 個中 4 個しか見えず次が想像できないので、あちらは送りボタンを残す。
+ *
+ * ぼかしは mask-image で実現する。--fade-in/--fade-out は既定 0(=段差なしで
+ * そのまま黒 = 不透明)、is-overflow-left/right(installHScroll がスクロール位置に
+ * 応じて付け外しする)が付いた側だけ値を持たせてグラデーションにする。
+ */
+.hscroll-track {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  overflow-x: auto;
+  /* 指はここを横スワイプできる(縦は端末側に渡さない)。 */
+  touch-action: pan-x;
+  scrollbar-width: none;
+  scroll-behavior: smooth;
+  --fade-in: 0px;
+  --fade-out: 0px;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--fade-in),
+    black calc(100% - var(--fade-out)),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--fade-in),
+    black calc(100% - var(--fade-out)),
+    transparent 100%
+  );
+}
+
+/* スクロールバーは出さない(子どもが摘まむには細すぎるし、行の高さを食う)。 */
+.hscroll-track::-webkit-scrollbar {
+  display: none;
+}
+
+/* 左に隠れている分があるときだけ左端をぼかす。幅は指のヒット領域を潰さない範囲で。 */
+.hscroll-track.is-overflow-left {
+  --fade-in: 28px;
+}
+
+/* 右に隠れている分があるときだけ右端をぼかす。両側に隠れていれば両方ぼける。 */
+.hscroll-track.is-overflow-right {
+  --fade-out: 28px;
+}
+
+/*
  * 紙(ふつう/わら半紙/キャンバス)の行と、マス(なし/方眼/ビーズ/写真)の行。
  * どちらも中身は 3〜4 個の nib-button で、.underlay-strip / .underlay-opacity-row と
  * 同じ理由(.grid-panel の flex-wrap を使って独立した 1 行にする)で flex-basis: 100%
  * にする。紙とマスは互いに独立した軸なので、どちらの行も同時に選択状態を持てる。
  *
- * 押す大きさ(88px 基準)は縮めない。狭い画面では折り返して縦に伸ばす。
- * 選べるものが増えても(紙にマンガ原稿用紙を足す等)同じ仕組みで収まる。
+ * ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+ * 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない(端を
+ * ぼかすだけ。理由は .hscroll-track のコメント参照)。実際にスクロールするのは中の
+ * .hscroll-track(makeHScrollPanelRow が差し込む)。
  */
 .paper-row,
 .grid-mode-row {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   flex-basis: 100%;
-  gap: 12px;
-  row-gap: 10px;
-  justify-content: center;
+  min-width: 0;
 }
 
 /*
@@ -866,36 +928,62 @@ ruby > rt {
  * 濃さ3段階(うすい/ふつう/こい) + うごかす、の行。
  * 写真が選ばれている間だけ帯の下に出す。.underlay-strip と同じ理由(.panel の
  * flex-wrap を使って独立した 1 行にする)で flex-basis: 100% にする。
- * ボタン自体はなし/方眼/ビーズ/写真の行と同じ nib-button を使い回すので、
- * 404px の幅上限にちょうど 4 個収まる(grid-panel のコメント参照)。
+ * ボタン自体はなし/方眼/ビーズ/写真の行と同じ nib-button を使い回す。
  *
- * 押す大きさ(88px 基準)は縮めない。狭い画面では折り返して縦に伸ばす。
- * 選べるものが増えても(紙にマンガ原稿用紙を足す等)同じ仕組みで収まる。
+ * ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+ * 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない(端を
+ * ぼかすだけ。理由は .hscroll-track のコメント参照。実際にスクロールするのは
+ * 中の .hscroll-track)。
  */
 .underlay-opacity-row {
   display: none;
-  flex-wrap: wrap;
+  position: relative;
   flex-basis: 100%;
-  gap: 12px;
-  row-gap: 10px;
-  justify-content: center;
+  min-width: 0;
 }
 
 .underlay-opacity-row.is-visible {
   display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-/* ペン先(クレヨン / Ｇペン / 筆)。太さの段の上に置く。 */
+/*
+ * ペン先(クレヨン / Ｇペン / 筆)。太さの段の上に置く。
+ * max-width が無いと、パネル自身が幅指定を持たないため、中の行(ペン先・太さ)の
+ * 中身(ボタン5個ぶんの自然幅)がそのままパネルの幅を押し広げてしまい、一度も溢れず
+ * .nib-row/.size-row の overflow-x: auto が効かなくなる(.grid-panel に max-width を
+ * 与えている理由と同じ)。520px はボタン5個(84px × 5 + gap 12px × 4 + 左右
+ * padding 16px × 2)がちょうど 1 行に収まる実測値。消しゴムのパネル(.eraser-panel、
+ * 太さの行しか持たない)も同じ理由で揃える。
+ */
+.pen-panel,
+.eraser-panel {
+  max-width: min(calc(100vw - 24px), 520px);
+}
+
 .pen-panel {
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
 }
 
+/*
+ * ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
+ * 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない(端を
+ * ぼかすだけ。理由は .hscroll-track のコメント参照。実際にスクロールするのは
+ * 中の .hscroll-track)。
+ */
 .nib-row {
+  position: relative;
   display: flex;
-  gap: 12px;
-  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  /* align-items: stretch(.pen-panel 側)だけに任せると、この行の中身(ボタン5個ぶんの
+     自然幅)がそのまま採用されて overflow-x: auto が効かない場合があるため、
+     幅をパネルの中身いっぱいに明示して確実に縮めさせる。 */
+  width: 100%;
+  min-width: 0;
 }
 
 .nib-button {
@@ -904,6 +992,8 @@ ruby > rt {
   align-items: center;
   justify-content: center;
   gap: 2px;
+  /* 横スクロールの中で潰れない・伸びない(下敷きの .underlay-add/.underlay-thumb と同じ)。 */
+  flex: none;
   width: 84px;
   height: 84px;
   border: 3px solid transparent;
@@ -936,19 +1026,28 @@ ruby > rt {
   background: #eaf4fc;
 }
 
-/* 太さの段。段数が増えたので、狭い画面では折り返す。 */
+/*
+ * 太さの段。ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。
+ * 折り返すとパネルが縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは
+ * 付けない(端をぼかすだけ。理由は .hscroll-track のコメント参照。実際に
+ * スクロールするのは中の .hscroll-track)。
+ */
 .size-row {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  justify-content: center;
-  max-width: min(520px, 88vw);
+  align-items: center;
+  gap: 8px;
+  /* .nib-row と同じ理由で、幅をパネルの中身いっぱいに明示して確実に縮めさせる。 */
+  width: 100%;
+  min-width: 0;
 }
 
 .size-button {
   display: flex;
   align-items: center;
   justify-content: center;
+  /* 横スクロールの中で潰れない・伸びない(下敷きの .underlay-add/.underlay-thumb と同じ)。 */
+  flex: none;
   width: 84px;
   height: 84px;
   border: 3px solid transparent;
