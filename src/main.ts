@@ -140,6 +140,8 @@ class App {
   private readonly placeCanvas: HTMLCanvasElement;
   private readonly placeCtx: CanvasRenderingContext2D | null;
   private placeInput: PointerInputControl | null = null;
+  /** 置く操作中だけ placeCanvas に張るホイールリスナーの後始末用。抜けたら abort する。 */
+  private placeWheelAbort: AbortController | null = null;
   /** 下敷き選択用の隠しファイル入力。DOM には置くが画面には出さない。 */
   private readonly underlayInput: HTMLInputElement;
   private readonly underlayStore: UnderlayStore = createUnderlayStore();
@@ -1227,6 +1229,13 @@ class App {
     this.paperWrap.style.transform = `scale(${PLACE_PAPER_SCALE})`;
     this.syncPlacingUnderlay();
     this.drawPlaceCanvas();
+    // 置く中は placeCanvas が紙より手前を覆うため、ホイールは紙まで届かない。
+    // 同じ処理(handleWheel)を置く用の要素にも付け、抜けるときに後始末する。
+    this.placeWheelAbort = new AbortController();
+    this.placeCanvas.addEventListener("wheel", (event) => this.handleWheel(event), {
+      passive: false,
+      signal: this.placeWheelAbort.signal,
+    });
   }
 
   /** 「これでいい」で抜ける。抜けたときの配置を保存し、紙の大きさと view を元に戻す。 */
@@ -1235,6 +1244,8 @@ class App {
     this.placingUnderlay = false;
     this.placeDragId = null;
     this.placeLastPoint = null;
+    this.placeWheelAbort?.abort();
+    this.placeWheelAbort = null;
     if (this.underlayRecord !== null) void this.underlayStore.put(this.underlayRecord);
     this.paperWrap.style.transformOrigin = "";
     const restore = this.savedView ?? IDENTITY;
@@ -1572,33 +1583,36 @@ class App {
    * この割り当てだと「2 本指でこする=移動、つまむ=拡大」が自然に一致する。
    */
   private installWheelZoom(canvas: HTMLCanvasElement): void {
-    canvas.addEventListener(
-      "wheel",
-      (event) => {
-        event.preventDefault();
-        if (this.multiDraw) return;
-        // 置く操作中は、紙と同じホイールの約束(ホイール=移動 / Ctrl(⌘)+ホイール=拡大)を
-        // 紙ではなく下敷きへ向け直す。紙自体はここで止め、動かさない(置く中の性質を壊さない)。
-        if (this.placingUnderlay) {
-          const factor = event.ctrlKey || event.metaKey ? Math.exp(-event.deltaY * 0.002) : 1;
-          const dx = event.ctrlKey || event.metaKey ? 0 : event.shiftKey ? -event.deltaY : -event.deltaX;
-          const dy = event.ctrlKey || event.metaKey ? 0 : event.shiftKey ? 0 : -event.deltaY;
-          this.applyUnderlayGesture({ scaleFactor: factor, dx, dy, centerX: event.clientX, centerY: event.clientY });
-          return;
-        }
-        if (event.ctrlKey || event.metaKey) {
-          const factor = Math.exp(-event.deltaY * 0.002);
-          this.applyView(zoomAt(this.view, this.layoutRect(), event.clientX, event.clientY, factor));
-          return;
-        }
-        // 等倍のときは動かしても意味がない(紙は画面に収まっている)。
-        if (this.view.scale <= 1.001) return;
-        const dx = event.shiftKey ? -event.deltaY : -event.deltaX;
-        const dy = event.shiftKey ? 0 : -event.deltaY;
-        this.applyView(panBy(this.view, dx, dy));
-      },
-      { passive: false },
-    );
+    canvas.addEventListener("wheel", (event) => this.handleWheel(event), { passive: false });
+  }
+
+  /**
+   * ホイール処理の本体。紙(canvas)と、置く操作中の全画面 placeCanvas の両方から呼ぶ
+   * (紙は覆われて手前の placeCanvas にイベントが止まってしまうため)。
+   * 処理そのものは 1 つに保ち、どちらの要素でリスナーを張るかだけを分ける。
+   */
+  private handleWheel(event: WheelEvent): void {
+    event.preventDefault();
+    if (this.multiDraw) return;
+    // 置く操作中は、紙と同じホイールの約束(ホイール=移動 / Ctrl(⌘)+ホイール=拡大)を
+    // 紙ではなく下敷きへ向け直す。紙自体はここで止め、動かさない(置く中の性質を壊さない)。
+    if (this.placingUnderlay) {
+      const factor = event.ctrlKey || event.metaKey ? Math.exp(-event.deltaY * 0.002) : 1;
+      const dx = event.ctrlKey || event.metaKey ? 0 : event.shiftKey ? -event.deltaY : -event.deltaX;
+      const dy = event.ctrlKey || event.metaKey ? 0 : event.shiftKey ? 0 : -event.deltaY;
+      this.applyUnderlayGesture({ scaleFactor: factor, dx, dy, centerX: event.clientX, centerY: event.clientY });
+      return;
+    }
+    if (event.ctrlKey || event.metaKey) {
+      const factor = Math.exp(-event.deltaY * 0.002);
+      this.applyView(zoomAt(this.view, this.layoutRect(), event.clientX, event.clientY, factor));
+      return;
+    }
+    // 等倍のときは動かしても意味がない(紙は画面に収まっている)。
+    if (this.view.scale <= 1.001) return;
+    const dx = event.shiftKey ? -event.deltaY : -event.deltaX;
+    const dy = event.shiftKey ? 0 : -event.deltaY;
+    this.applyView(panBy(this.view, dx, dy));
   }
 
   private afterHistoryChange(): void {

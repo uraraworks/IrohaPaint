@@ -92,12 +92,14 @@ export const MOVE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
 
 /**
  * 「かくす」ボタンには目のアイコンではなく、今の下敷き(GRID_MODES[mode].iconSvg)そのものを
- * 出す。隠しているときは、そのアイコンに ✕ を重ねる。SOUND_OFF_SVG(スピーカーはそのまま
- * 残して斜め線を足す)と同じ作法で、✕ の線の太さ・色もそちらに揃える。
+ * 出す。隠しているときは、そのアイコンに ✕ を重ねる。写真・方眼・ビーズは 32x32 の枠いっぱいに
+ * 絵があり、SOUND_OFF_SVG と同じ小さな十字(7px角)だと絵に埋もれて読めない。右下へ、紙の色
+ * (#fffdf7)の丸い下地を敷いた上に一辺 11px の大きな十字を重ね、下の絵と混ざらないようにする。
  * 元のアイコンの `</svg>` の直前に差し込むだけなので、どの下敷きアイコンにも使い回せる。
  */
 export function withHiddenBadge(iconSvg: string): string {
-  const badge = `<path d="M21 12.5l7 7M28 12.5l-7 7" fill="none" stroke="#3d3730" stroke-width="2"
+  const badge = `<circle cx="23" cy="23" r="9" fill="#fffdf7" stroke="#3d3730" stroke-width="2"/>
+    <path d="M18.5 18.5l9 9M27.5 18.5l-9 9" fill="none" stroke="#3d3730" stroke-width="2.4"
     stroke-linecap="round"/>`;
   return iconSvg.replace("</svg>", `${badge}</svg>`);
 }
