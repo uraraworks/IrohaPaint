@@ -111,6 +111,8 @@ body {
   padding: 10px;
   /* 拡大した紙がヘッダーやツールバーの上へはみ出さないよう、描く場所で切り取る。 */
   overflow: hidden;
+  /* 紙の外側(余白)を摘まんでもブラウザのピンチ拡大に入らないようにする。 */
+  touch-action: none;
 }
 
 /* 紙と方眼をまとめて拡大・移動させる入れ物。変形はここに掛ける。 */
@@ -1083,6 +1085,7 @@ ruby > rt {
   gap: 18px;
   padding: 18px;
   align-content: start;
+  touch-action: pan-y;
 }
 
 .gallery-card {
@@ -1142,6 +1145,7 @@ ruby > rt {
   /* 指を離した位置でカードが落ち着く。子どもの雑なスワイプでも半端に止まらない。 */
   scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
 }
 
 .timeline-track {

@@ -13,6 +13,11 @@
     <link rel="icon" type="image/png" sizes="32x32" href="./icon/leaf-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="./icon/leaf-16.png" />
     <link rel="apple-touch-icon" href="./icon/apple-touch-icon.png" />
+    <!-- iPhone の Safari は全画面 API に対応しないため、全画面ボタンは出ない(iPad は出る)。
+         代わりに「ホーム画面に追加」で全画面になる。iOS 16.4 未満はマニフェストの
+         display: standalone を見ないので、この 2 行が無いと Safari の UI が残る。 -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <link rel="manifest" href="./manifest.webmanifest" />
     <title>いろは - Iroha Paint</title>
   </head>

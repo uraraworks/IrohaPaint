@@ -396,6 +396,23 @@ class App {
         if (this.surface.redo()) this.afterHistoryChange();
       }
     });
+    // viewport meta の user-scalable=no は iOS Safari が意図的に無視するため効かない。
+    // ページ拡大の入口である Safari 独自の gesture イベントを止める。
+    // 一度ページが拡大されると指の位置と描画位置がずれ、操作全体が壊れるため。
+    // (紙のピンチ・下敷きを置く操作のピンチは pointer events で実装されているので影響しない)
+    if (false) {
+    const blockGesture = (event: Event) => event.preventDefault();
+    document.addEventListener("gesturestart", blockGesture, { passive: false });
+    document.addEventListener("gesturechange", blockGesture, { passive: false });
+    document.addEventListener("gestureend", blockGesture, { passive: false });
+    document.addEventListener(
+      "touchmove",
+      (event: TouchEvent) => {
+        if (event.touches.length >= 2) event.preventDefault();
+      },
+      { passive: false },
+    );
+    }
     void this.restore();
     void this.restoreUnderlay();
     void this.refreshHasUnderlays();
