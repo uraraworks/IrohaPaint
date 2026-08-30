@@ -26,7 +26,7 @@ import { importUnderlay, UnderlayImportError, type UnderlayImportErrorCode } fro
 import { createUnderlayStore, pruneUnderlays, type UnderlayStore } from "./core/underlayStore.ts";
 import { hexToRgba, Surface } from "./core/surface.ts";
 import { installPointerInput, toCanvasPoint, type GestureChange, type PointerInputControl } from "./core/pointerInput.ts";
-import { clampView, IDENTITY, panBy, toCss, zoomAt, type ViewTransform } from "./core/viewport.ts";
+import { clampView, IDENTITY, MIN_SCALE, panBy, toCss, zoomAt, type Rect, type ViewTransform } from "./core/viewport.ts";
 import {
   CHEST_ICON_SVG,
   INITIAL_TOOLS,
@@ -120,6 +120,15 @@ const PAPER_CORNER_RADIUS = 14;
 const AUTOSAVE_DELAY_MS = 800;
 /** 履歴(まえにもどす)を積む間隔。 */
 const SNAPSHOT_INTERVAL_MS = 3 * 60 * 1000;
+
+/**
+ * 画面(描画領域)の短い辺がこれ未満ならスマホ扱いにする。
+ * タブレットは子どもが使う想定なので今までどおり紙が全部見える状態を保ち、
+ * スマホは大人/中学生以降が使う想定なので、一部しか見えなくても画面いっぱいに使う。
+ * 例: iPhone 縦 390x844・横 844x390 → 短辺 390 → スマホ扱い。
+ *     iPad 縦 820x1180・横 1180x820 → 短辺 820 → タブレット扱い。
+ */
+const PHONE_SHORT_SIDE_MAX = 500;
 
 type ActiveTool = "pen" | "eraser" | "picker" | "fill";
 
@@ -381,6 +390,12 @@ class App {
     window.addEventListener("resize", () => {
       if (this.placingUnderlay) this.drawPlaceCanvas();
     });
+    // 画面の向き・大きさが変わるたびに、スマホ/タブレットの判定と最初の倍率をやり直す
+    // (回転で短辺が変わる、外部ディスプレイでウィンドウが伸び縮みする、等)。
+    window.addEventListener("resize", () => this.applyInitialView());
+    window.addEventListener("orientationchange", () => this.applyInitialView());
+    // ここまででレイアウトに要る要素は揃っているので、最初の見え方を決める。
+    this.applyInitialView();
     // PC のキーボードも一応拾う(タッチが主・マウス/キーは後追いという位置づけ)。
     window.addEventListener("keydown", (event) => {
       // 置く操作中に履歴が動くと混乱する(2本指タップの「もどる」と同じ理由で止める)。
@@ -1764,10 +1779,51 @@ class App {
   }
 
   private applyView(next: ViewTransform): void {
-    this.view = clampView(next, this.layoutRect(), window.innerWidth, window.innerHeight);
+    // 「画面」= 拡大した紙を切り取る枠(.stage、overflow: hidden)の矩形。
+    // window.innerWidth/innerHeight を使うとヘッダー/ツールバー分だけ実際の
+    // 描画領域より大きくなり、隙間が見えてしまう(.stage はヘッダーの下・
+    // ツールバーの上に収まる領域なので、window 全体とは一致しない)。
+    this.view = clampView(next, this.layoutRect(), this.stageRect());
     this.paperWrap.style.transform = toCss(this.view);
-    // 拡大中だけ「ぜんぶ見る」を出す。拡大したまま迷子になるのを防ぐ安全弁。
+    // 紙が全部見えていないときだけ「ぜんぶ見る」を出す(スマホでは常に出る)。
     this.fitButton?.classList.toggle("is-visible", this.view.scale > 1.02);
+  }
+
+  /** 「画面(描画領域)」= 紙を切り取る枠(.stage)の、今の矩形。 */
+  private stageRect(): Rect {
+    return this.stage.getBoundingClientRect();
+  }
+
+  /**
+   * 画面の短い辺が PHONE_SHORT_SIDE_MAX 未満ならスマホ扱い。
+   * タブレット/PCは今までどおり紙が全部見える(倍率1)状態を保つ。
+   */
+  private isPhoneScreen(stage: Rect): boolean {
+    return Math.min(stage.width, stage.height) < PHONE_SHORT_SIDE_MAX;
+  }
+
+  /**
+   * 最初の倍率。スマホは紙が画面(描画領域)を覆う倍率(縦横それぞれの比の大きい方)、
+   * タブレット/PCは今までどおり1(全体表示)。
+   */
+  private initialScale(stage: Rect, layout: Rect): number {
+    if (!this.isPhoneScreen(stage)) return MIN_SCALE;
+    if (layout.width <= 0 || layout.height <= 0) return MIN_SCALE;
+    return Math.max(stage.width / layout.width, stage.height / layout.height);
+  }
+
+  /**
+   * 画面(スマホ/タブレット)に合わせた最初の見え方を適用する。起動時・作品を開いた/
+   * 新しく描き始めた直後・画面の回転やリサイズのたびに呼ぶ。紙の自然な中心(layoutの
+   * 中心、今までどおり画面の中央にある)を固定してズームするので、タブレットでは
+   * 今までどおり中央のまま、スマホでは中央から画面いっぱいまで広がる。
+   */
+  private applyInitialView(): void {
+    const stage = this.stageRect();
+    const layout = this.layoutRect();
+    const anchorX = layout.left + layout.width / 2;
+    const anchorY = layout.top + layout.height / 2;
+    this.applyView(zoomAt(IDENTITY, layout, anchorX, anchorY, this.initialScale(stage, layout)));
   }
 
   /**
@@ -1940,6 +1996,8 @@ class App {
       await this.save();
       this.work = work;
       this.applyWorkPaper();
+      // 作品を切り替えたので、スマホ/タブレットに合わせた最初の見え方からやり直す。
+      this.applyInitialView();
     }
     await this.captureSnapshot("revert");
     await this.surface.restoreFrom(image);
@@ -1962,6 +2020,8 @@ class App {
     await this.surface.restoreFrom(image);
     this.work = work;
     this.applyWorkPaper();
+    // 開いた作品はスマホ/タブレットに合わせた最初の見え方から始める。
+    this.applyInitialView();
     this.lastSnapshotAt = work.updatedAt;
     // ひらいた瞬間の姿を残す。この 1 枚が上書き事故の保険になる。
     await this.captureSnapshot("open");
@@ -1978,6 +2038,8 @@ class App {
     // 「あたらしく かく」を押した時点で一覧に 1 枚増えていないと、描く前に閉じた子の絵が迷子になる。
     this.work = createWork(await this.surface.toPng(), Date.now(), await this.surface.toThumbnail());
     this.applyWorkPaper();
+    // 新しく描き始めた作品もスマホ/タブレットに合わせた最初の見え方から始める。
+    this.applyInitialView();
     await this.store.put(this.work);
     this.lastSnapshotAt = this.work.updatedAt;
     this.persistProgress();
@@ -2005,6 +2067,7 @@ class App {
         this.work = next;
       }
       this.applyWorkPaper();
+      this.applyInitialView();
       this.persistProgress();
       this.syncHistoryButtons();
     }
@@ -2065,6 +2128,9 @@ class App {
       await this.surface.restoreFrom(image);
       this.work = latest;
       this.applyWorkPaper();
+      // 起動直後にもう一度、スマホ/タブレットに合わせた最初の見え方を揃える
+      // (コンストラクタ側の1回目は絵の読み込み前で、大きさが変わっていないので実質は保険)。
+      this.applyInitialView();
       this.lastSnapshotAt = latest.updatedAt;
       this.syncHistoryButtons();
       // 起動して絵が出た時点も「ひらいた」に含める(別の子が使い始める入口はここ)。

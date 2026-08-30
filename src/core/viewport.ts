@@ -52,22 +52,44 @@ export function panBy(view: ViewTransform, dx: number, dy: number): ViewTransfor
 
 /**
  * 紙が画面外へ飛んでいかないよう位置を丸める。
- * 等倍(scale=1)なら常に元の位置へ吸着させる … 子どもが紙を見失わないための保険。
+ *
+ * 元は「等倍(scale=1)なら常に元の位置へ吸着させる」という特別扱いだけだった
+ * (子どもが紙を見失わないための保険で、タブレット/PCでは紙が常に画面に収まる前提)。
+ * スマホでは紙が画面より大きいままでよく、その状態でも動かせる必要が出てきたため、
+ * 軸ごとの規則へ一般化した:
+ *   - その軸で紙が画面より小さい → 中央に固定(動かせない。今までの等倍centeredと同じ結果)
+ *   - その軸で紙が画面より大きい → 画面の外に隙間ができない範囲(紙の端が画面の端の
+ *     内側へ来ない範囲)で動かせる
+ * これによりタブレット(紙が画面に収まる)は今までと同じ挙動のまま、スマホ(紙が画面より
+ * 大きい)は同じ式で動かせるようになる。
+ *
+ * layout / viewport はどちらも変換前(scale=1)の矩形。画面上の紙の左端は
+ * layout.left + tx、右端は layout.left + tx + layout.width * scale になる(縦も同様)。
  */
-export function clampView(view: ViewTransform, layout: Rect, viewportW: number, viewportH: number): ViewTransform {
-  if (view.scale <= MIN_SCALE + 0.001) return { scale: MIN_SCALE, tx: 0, ty: 0 };
-  const width = layout.width * view.scale;
-  const height = layout.height * view.scale;
-  // 紙の端が画面の中心より内側へは来られないようにする(端が掴める範囲で自由)。
-  const minTx = viewportW * 0.5 - layout.left - width;
-  const maxTx = viewportW * 0.5 - layout.left;
-  const minTy = viewportH * 0.5 - layout.top - height;
-  const maxTy = viewportH * 0.5 - layout.top;
+export function clampView(view: ViewTransform, layout: Rect, viewport: Rect): ViewTransform {
   return {
     scale: view.scale,
-    tx: clamp(view.tx, minTx, maxTx),
-    ty: clamp(view.ty, minTy, maxTy),
+    tx: clampAxis(view.tx, layout.left, layout.width * view.scale, viewport.left, viewport.width),
+    ty: clampAxis(view.ty, layout.top, layout.height * view.scale, viewport.top, viewport.height),
   };
+}
+
+/** clampView の1軸分。tx/ty どちらにも使えるよう左右(上下)を汎用の start/size で扱う。 */
+function clampAxis(
+  t: number,
+  layoutStart: number,
+  size: number,
+  viewportStart: number,
+  viewportSize: number,
+): number {
+  if (size <= viewportSize) {
+    // 紙(この軸)は画面に収まる → 中央固定。
+    return viewportStart + viewportSize / 2 - layoutStart - size / 2;
+  }
+  // 紙(この軸)は画面より大きい → 端が画面の端の内側へ来ない範囲(隙間ができない範囲)で動かせる。
+  const minT = viewportStart + viewportSize - layoutStart - size;
+  const maxT = viewportStart - layoutStart;
+  return clamp(t, minT, maxT);
 }
 
 export function toCss(view: ViewTransform): string {
