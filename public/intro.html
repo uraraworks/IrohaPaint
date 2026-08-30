@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>いろは — ブラウザで開くだけのペイント</title>
+<meta name="description" content="小学校低〜中学年が説明ゼロで 1 枚描き切れることに全振りしたペイントソフト。インストール不要・サーバー不要・作品はすべて端末内。制作途中のプロトタイプです。" />
+<link rel="icon" href="./icon/leaf-192.png" />
+<style>
+  :root{
+    --ink:#3d3730; --paper:#fffdf7; --ground:#f2ece1;
+    --sub:#6f665a; --line:#e2d9c9;
+    --red:#e2544a; --blue:#4aa3df; --green:#8cc152; --yellow:#f3c64b;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",system-ui,sans-serif;
+    line-height:1.85; font-size:16px;
+  }
+  .wrap{max-width:760px; margin:0 auto; padding:0 20px 80px}
+  a{color:inherit}
+
+  /* 制作途中であることを最初に告げる */
+  .flag{
+    background:var(--yellow); color:var(--ink); text-align:center;
+    padding:10px 16px; font-size:14px; font-weight:700; letter-spacing:.02em;
+  }
+
+  header{text-align:center; padding:56px 0 40px}
+  header img{width:96px; height:96px; display:block; margin:0 auto 18px}
+  h1{font-size:40px; margin:0 0 6px; letter-spacing:.08em}
+  .tagline{font-size:17px; color:var(--sub); margin:0}
+
+  .cta{display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin:32px 0 0}
+  .btn{
+    display:inline-block; padding:14px 28px; border-radius:14px; text-decoration:none;
+    font-weight:700; border:2px solid var(--ink);
+  }
+  .btn-main{background:var(--ink); color:var(--paper)}
+  .btn-sub{background:transparent; color:var(--ink)}
+
+  section{
+    background:var(--paper); border:1px solid var(--line); border-radius:18px;
+    padding:28px 26px; margin:20px 0;
+  }
+  h2{font-size:20px; margin:0 0 14px; letter-spacing:.04em}
+  h2::before{
+    content:""; display:inline-block; width:10px; height:10px; border-radius:3px;
+    background:var(--red); margin-right:10px; vertical-align:middle;
+  }
+  section:nth-of-type(2) h2::before{background:var(--blue)}
+  section:nth-of-type(3) h2::before{background:var(--green)}
+  section:nth-of-type(4) h2::before{background:var(--yellow)}
+  section:nth-of-type(5) h2::before{background:var(--red)}
+  p{margin:0 0 14px}
+  p:last-child{margin-bottom:0}
+  ul{margin:0; padding-left:1.2em}
+  li{margin-bottom:8px}
+  li:last-child{margin-bottom:0}
+  strong{font-weight:700}
+
+  .table-scroll{overflow-x:auto}
+  table{border-collapse:collapse; width:100%; min-width:460px; font-size:15px}
+  th,td{text-align:left; vertical-align:top; padding:10px 12px; border-bottom:1px solid var(--line)}
+  tr:last-child th,tr:last-child td{border-bottom:none}
+  th{white-space:nowrap; width:7em; font-weight:700}
+
+  .note{font-size:14px; color:var(--sub)}
+  footer{text-align:center; color:var(--sub); font-size:14px; padding:8px 0 0}
+  footer a{text-decoration:underline}
+  @media (max-width:520px){
+    h1{font-size:32px}
+    header{padding:40px 0 28px}
+    section{padding:22px 18px}
+    /* 狭い画面では表を横スクロールさせず、見出しと中身を縦に積む。
+       紹介ページを読むのに横へ振る操作を要求しない。 */
+    table{min-width:0}
+    tr{display:block; padding:10px 0; border-bottom:1px solid var(--line)}
+    tr:last-child{border-bottom:none}
+    th,td{display:block; width:auto; padding:0; border:none}
+    th{margin-bottom:2px; color:var(--sub); font-size:13px; letter-spacing:.06em}
+  }
+</style>
+</head>
+<body>
+
+<div class="flag">制作途中のプロトタイプです（Phase 0）。仕様も見た目も、まだ変わります。</div>
+
+<div class="wrap">
+
+<header>
+  <img src="./icon/leaf-192.png" alt="" />
+  <h1>いろは</h1>
+  <p class="tagline">宝箱で道具が増えていく、ブラウザで開くだけのペイント。</p>
+  <div class="cta">
+    <a class="btn btn-main" href="./">さわってみる</a>
+    <a class="btn btn-sub" href="https://github.com/uraraworks/IrohaPaint">GitHub</a>
+  </div>
+</header>
+
+<section>
+  <h2>これは何か</h2>
+  <p>
+    <strong>小学校低〜中学年が、説明ゼロで 1 枚描き切れること</strong>だけに全振りしたペイントソフトです。
+    ブラウザで開けばすぐ描けます。インストールもアカウントも要りません。
+  </p>
+  <p>
+    名前の「いろは」は、<em>ものごとのいろは</em>（＝入門）と <em>色</em> の掛詞です。
+    アイコンはいろはモミジ（7 裂＝いろはにほへと）を虹の 7 色で塗ったもの。
+  </p>
+  <p class="note">
+    描いた絵はすべてその端末の中に保存されます。どこかへ送られることはありません。
+  </p>
+</section>
+
+<section>
+  <h2>いまできること</h2>
+  <div class="table-scroll">
+  <table>
+    <tr><th>描く</th><td>ペン先 5 種（クレヨン / 色えんぴつ / Ｇペン / 筆 / 油絵）× 太さ 5 段階、12 色、消しゴム、バケツ塗り、スポイト</td></tr>
+    <tr><th>紙をえらぶ</th><td>ふつう / わら半紙 / キャンバス。紙の質感は絵の一部なので、書き出す PNG にも入ります</td></tr>
+    <tr><th>下敷き</th><td>方眼、ビーズ（マス目にしか置けないドット絵モード）、そして<strong>写真</strong>。目安なので絵には残りません</td></tr>
+    <tr><th>写真をなぞる</th><td>手元の画像を取り込んで下敷きにできます。指で位置と大きさを決め、濃さは 3 段階。見比べたいときは 1 タップで隠せます</td></tr>
+    <tr><th>直す</th><td>戻る・進む。作品ごとの履歴が残るので、上書きしてしまっても後から戻せます</td></tr>
+    <tr><th>ためる</th><td>「作品」に一覧。捨てても本当には消えず、いつでも取り戻せます</td></tr>
+    <tr><th>出す</th><td>「完成！」で PNG に書き出し</td></tr>
+    <tr><th>みんなで</th><td>1 台の画面に複数人で同時に描けるモード</td></tr>
+    <tr><th>目にやさしく</th><td>画面の明るさを 4 段階で落とせます。絵の色は変わりません</td></tr>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>考えていること</h2>
+  <ul>
+    <li><strong>タッチが母語、マウスが後追い。</strong> ホバーや右クリックに機能を置きません。押す場所は指の大きさ基準です</li>
+    <li><strong>失敗が存在しない。</strong> 取り返しのつかない操作を作りません。作品も本当には消えません</li>
+    <li><strong>説明しない。</strong> 起動直後にガイドを出しません。触れば分かる形にできないなら、その機能の設計がまだ足りていないと考えます</li>
+    <li><strong>絵はその子のもの。</strong> 端末の外へ出しません。名前も年齢も訊きません</li>
+  </ul>
+</section>
+
+<section>
+  <h2>まだできないこと</h2>
+  <p>プロトタイプなので、正直に書いておきます。</p>
+  <ul>
+    <li>絵は 1 枚単位です。ページをめくる本やマンガはまだ作れません（データの形だけ用意してあります）</li>
+    <li>紙の大きさははがき横の 1 種類だけです。縦長やマンガ原稿はこれからです</li>
+    <li>レイヤーはありません</li>
+    <li>作品を他の人に送る仕組みはありません。書き出した PNG を渡してください</li>
+    <li>実機での確認が追いついていない部分があります。手元の環境でうまく動かないときは GitHub の Issue で教えてもらえると助かります</li>
+  </ul>
+</section>
+
+<section>
+  <h2>作っている人へ</h2>
+  <p>
+    ソースは MIT ライセンスで公開しています。企画段階では GPL 系も検討しましたが、
+    <strong>学校・先生・他の開発者がためらわずに使える</strong>ことを優先しました。
+  </p>
+  <p class="note">
+    TypeScript + Vite。ライブラリを持たない素の Canvas 実装です。サーバーはありません。
+  </p>
+</section>
+
+<footer>
+  <p>
+    <a href="./">アプリを開く</a> ・
+    <a href="https://github.com/uraraworks/IrohaPaint">ソースコード</a>
+  </p>
+</footer>
+
+</div>
+</body>
+</html>
