@@ -180,7 +180,7 @@ export const TOOL_DEFS: Readonly<Record<ToolId, ToolDef>> = {
       <path d="M26 19c1.8 2.6 2.6 3.7 2.6 5a2.6 2.6 0 0 1-5.2 0c0-1.3.8-2.4 2.6-5z"
         fill="#4aa3df" stroke="#3d3730" stroke-width="2"/>
     </svg>`,
-    description: "かこんだ なかを いっきに ぬれるよ",
+    description: "かこみ・しかく・まるで いっきに ぬれるよ",
   },
 };
 
@@ -270,3 +270,54 @@ export function nextUnlock(strokeCount: number, ownedTools: readonly ToolId[]): 
   }
   return null;
 }
+
+/**
+ * 「塗る」の 3 つの塗り方。
+ *
+ * 既定は area(色の境界まで)のまま — 囲んで塗るのは塗り絵そのものなので、
+ * できることの中心はここ。ただし **境界で止まるという理屈は子どもには見えない**。
+ * ビーズを並べた上で押すと隙間から全面へ漏れる、線が少しでも切れていると外へ出る、
+ * といった結果が「バケツをこぼす」という素朴な期待から離れていく。
+ * しかく / まる は、その理屈を要らなくするための逃げ道:
+ * **指でなぞった範囲がそのまま塗られる**ので、押した場所と結果が必ず一致する。
+ */
+export const FILL_MODE_ORDER = ["area", "rect", "circle"] as const;
+
+export interface FillModeDef {
+  id: (typeof FILL_MODE_ORDER)[number];
+  label: LabelPart[];
+  iconSvg: string;
+  description: string;
+}
+
+export const FILL_MODE_DEFS: Readonly<Record<(typeof FILL_MODE_ORDER)[number], FillModeDef>> = {
+  // 境界まで広がる塗り。アイコンは「囲まれた形の中だけ色が入っている」ことを見せる。
+  area: {
+    id: "area",
+    label: [{ base: "かこみ" }],
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M6 16c0-6 4-10 10-10s10 4 10 10-4 10-10 10S6 22 6 16z" fill="#4aa3df"
+        stroke="#3d3730" stroke-width="2"/>
+      <path d="M16 6v20" stroke="#3d3730" stroke-width="2"/>
+      <path d="M16 6c-6 0-10 4-10 10s4 10 10 10" fill="#fffdf7" stroke="#3d3730" stroke-width="2"
+        stroke-linejoin="round"/>
+    </svg>`,
+    description: "せんで かこんだ なかを ぬれるよ",
+  },
+  rect: {
+    id: "rect",
+    label: [{ base: "しかく" }],
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="6" y="8" width="20" height="16" rx="2" fill="#4aa3df" stroke="#3d3730" stroke-width="2"/>
+    </svg>`,
+    description: "ゆびで なぞった しかくを ぬれるよ",
+  },
+  circle: {
+    id: "circle",
+    label: [{ base: "まる" }],
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <ellipse cx="16" cy="16" rx="10" ry="9" fill="#4aa3df" stroke="#3d3730" stroke-width="2"/>
+    </svg>`,
+    description: "ゆびで なぞった まるを ぬれるよ",
+  },
+};

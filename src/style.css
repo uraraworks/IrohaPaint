@@ -1050,7 +1050,8 @@ ruby > rt {
  * 太さの行しか持たない)も同じ理由で揃える。
  */
 .pen-panel,
-.eraser-panel {
+.eraser-panel,
+.fill-panel {
   max-width: min(calc(100vw - 24px), 520px);
 }
 
@@ -1066,7 +1067,8 @@ ruby > rt {
  * ぼかすだけ。理由は .hscroll-track のコメント参照。実際にスクロールするのは
  * 中の .hscroll-track)。
  */
-.nib-row {
+.nib-row,
+.fill-mode-row {
   position: relative;
   display: flex;
   align-items: center;

@@ -2,6 +2,7 @@
 // 「もどる」はパッチ方式(undoStack.ts 参照)。
 import { BEAD_COLS, BEAD_ROWS, CANVAS_HEIGHT, CANVAS_WIDTH } from "./model.ts";
 import { floodFill, type Rgba } from "./floodFill.ts";
+import { cellsBounds, shapeBox, shapeCells, type ShapeMode } from "./fillShape.ts";
 import { DirtyRect, MAX_STEPS, trimPatches, type FillRect, type UndoPatch } from "./undoStack.ts";
 import { NIB_DEFS, shiftColor, strokeWidth, type NibDynamics } from "./brush.ts";
 
@@ -125,6 +126,11 @@ export class Surface {
   private redoPatches: UndoPatch[] = [];
   /** 描いている最中の線。pointerId をキーにするので、何人が同時に描いても混ざらない。 */
   private readonly strokes = new Map<number, StrokeState>();
+  /**
+   * 「しかく」「まる」で塗る途中の下見を描いた範囲。
+   * 指を動かすたびに前の下見を消して描き直すので、消す範囲を覚えておく。
+   */
+  private shapePreviewDirty: FillRect | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     canvas.width = CANVAS_WIDTH;
@@ -224,14 +230,18 @@ export class Surface {
    * 実物のビーズに合わせて **穴あきの円** で描く。四角で埋めるより、
    * 出来上がりの見た目に近く、図案としても数えやすい。
    */
-  private paintCell(col: number, row: number, color: string | null): void {
+  private paintCell(
+    col: number,
+    row: number,
+    color: string | null,
+    ctx: CanvasRenderingContext2D = this.ctx,
+  ): void {
     // マスの境界は実数なので、消すときは外側へ丸めて隣に残りかすを作らない。
     const left = Math.floor(col * BEAD_CELL_WIDTH);
     const top = Math.floor(row * BEAD_CELL_HEIGHT);
     const right = Math.ceil((col + 1) * BEAD_CELL_WIDTH);
     const bottom = Math.ceil((row + 1) * BEAD_CELL_HEIGHT);
 
-    const ctx = this.ctx;
     ctx.save();
     ctx.globalCompositeOperation = "destination-out";
     ctx.fillRect(left, top, right - left, bottom - top);
@@ -673,6 +683,7 @@ export class Surface {
   private clearOverlay(): void {
     this.overlayCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     for (const stroke of this.strokes.values()) stroke.overlayDirty = null;
+    this.shapePreviewDirty = null;
   }
 
   private syncBackup(rect: FillRect): void {
@@ -727,6 +738,74 @@ export class Surface {
     this.ctx.globalCompositeOperation = "source-over";
     this.ctx.putImageData(image, 0, 0);
     return rect;
+  }
+
+  /**
+   * 「しかく」「まる」の下見。指を動かしている間、仮の層へ **出来上がりと同じ形** を描く。
+   *
+   * 半透明にしたり枠線だけにしたりはしない。押す前に見えているものと、指を離した
+   * あとに残るものが違うと、子どもは「押したら変わった」と受け取ってしまう。
+   */
+  previewShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, beads: boolean): void {
+    this.clearShapePreview();
+    const box = shapeBox(x0, y0, x1, y1, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const rect = this.paintShape(this.overlayCtx, mode, box, color, beads);
+    // 消す範囲は 1px 広めに取る(縁のアンチエイリアスが残らないように)。
+    if (rect !== null) {
+      this.shapePreviewDirty = {
+        x: Math.max(0, rect.x - 1),
+        y: Math.max(0, rect.y - 1),
+        width: Math.min(CANVAS_WIDTH, rect.width + 2),
+        height: Math.min(CANVAS_HEIGHT, rect.height + 2),
+      };
+    }
+  }
+
+  /** 下見を消す。指を離したとき / ピンチに移ったときに呼ぶ。 */
+  clearShapePreview(): void {
+    const rect = this.shapePreviewDirty;
+    if (rect === null) return;
+    this.overlayCtx.clearRect(rect.x, rect.y, rect.width, rect.height);
+    this.shapePreviewDirty = null;
+  }
+
+  /**
+   * 「しかく」「まる」で塗る。なぞった 2 点が対角になる枠に収める。
+   * 色の境界を一切見ないので、線が切れていても、ビーズの隙間があっても漏れない。
+   */
+  fillShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, beads: boolean): FillRect | null {
+    this.clearShapePreview();
+    const box = shapeBox(x0, y0, x1, y1, CANVAS_WIDTH, CANVAS_HEIGHT);
+    return this.paintShape(this.ctx, mode, box, color, beads);
+  }
+
+  /** 形を 1 つ描く。塗った矩形を返す(何も塗らなければ null)。 */
+  private paintShape(
+    ctx: CanvasRenderingContext2D,
+    mode: ShapeMode,
+    box: FillRect,
+    color: string,
+    beads: boolean,
+  ): FillRect | null {
+    if (box.width <= 0 || box.height <= 0) return null;
+    if (beads) {
+      // ビーズは 1 マス = 1 個。欠けたビーズが出ると図案として作れなくなる。
+      const cells = shapeCells(mode, box, BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT, BEAD_COLS, BEAD_ROWS);
+      for (const cell of cells) this.paintCell(cell.col, cell.row, color, ctx);
+      return cellsBounds(cells, BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT);
+    }
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = color;
+    if (mode === "rect") {
+      ctx.fillRect(box.x, box.y, box.width, box.height);
+    } else {
+      ctx.beginPath();
+      ctx.ellipse(box.x + box.width / 2, box.y + box.height / 2, box.width / 2, box.height / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    return box;
   }
 
   /**

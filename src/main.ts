@@ -40,6 +40,8 @@ import {
 } from "./core/viewport.ts";
 import {
   CHEST_ICON_SVG,
+  FILL_MODE_DEFS,
+  FILL_MODE_ORDER,
   INITIAL_TOOLS,
   nextUnlock,
   orderTools,
@@ -49,6 +51,7 @@ import {
   type ToolId,
   type Unlock,
 } from "./core/tools.ts";
+import { isShapeMode, type FillMode, type ShapeMode } from "./core/fillShape.ts";
 import { labelText, plainText, renderLabel, renderRuby } from "./ui/label.ts";
 import { SoundPlayer } from "./core/sound.ts";
 import { loadProgress, nextScreenFilter, saveProgress, type ScreenFilterMode } from "./core/progress.ts";
@@ -295,7 +298,24 @@ class App {
   private penPanel!: Panel;
   private eraserPanel!: Panel;
   private gridPanel!: Panel;
+  private fillPanel!: Panel;
   private gallery!: Gallery;
+
+  /**
+   * 塗り方。既定は「かこみ」(色の境界まで)。
+   *
+   * 境界で止まるという理屈は、大人には当たり前でも子どもには見えない。
+   * ビーズを並べた上で押すと隙間から全面へ漏れ、線が少しでも切れていれば外へ出る。
+   * 「しかく」「まる」は **なぞった範囲がそのまま塗られる**逃げ道で、
+   * 押した場所と結果が必ず一致する(バケツをこぼす、という素朴な期待どおりに動く)。
+   */
+  private fillMode: FillMode = "area";
+
+  /**
+   * 「しかく」「まる」でなぞっている最中の状態。触っていなければ null。
+   * 塗り方はなぞり始めた時点のものを持つ(途中で切り替わっても形が変わらない)。
+   */
+  private shapeDrag: { id: number; mode: ShapeMode; x: number; y: number; endX: number; endY: number } | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -505,24 +525,26 @@ class App {
       this.sound.play("shu");
     });
     this.gridPanel = this.createGridPanel();
+    this.fillPanel = this.createFillPanel();
     this.syncSwatches();
     this.syncSizes();
     this.syncNibs();
     this.syncGridButtons();
+    this.syncFillModes();
     this.syncPaperLayer();
 
     // パネル外タップで閉じる。
     document.addEventListener("pointerdown", (event) => {
       const target = event.target as Node;
       if (this.isToolbarNode(target)) return;
-      for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel]) {
+      for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel, this.fillPanel]) {
         if (panel.isOpen && !panel.element.contains(target)) panel.close();
       }
     });
 
     // 画面の回転・リサイズで開いているパネルだけ位置を計算し直す(1箇所にまとめる)。
     const repositionOpenPanels = (): void => {
-      for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel]) {
+      for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel, this.fillPanel]) {
         panel.reposition();
       }
     };
@@ -633,6 +655,55 @@ class App {
    * 行の並びは 紙 → マス → (写真のときだけ)一覧 → 濃さ の順。紙はマスとは独立した軸
    * (下敷きの帯と違って常に表示)なので、専用の行(createPaperRow)を別に持つ。
    */
+  /**
+   * 「塗る」の塗り方を選ぶパネル。ペン先の段と同じ作り(nib-button を横に並べる)にして、
+   * 操作を覚え直させない。3 つしかないので送りボタンは出ない。
+   */
+  private createFillPanel(): Panel {
+    const panel = new Panel(document.body, "fill-panel");
+    const row = document.createElement("div");
+    row.className = "fill-mode-row";
+    const { track } = makeHScrollPanelRow(row);
+    for (const id of FILL_MODE_ORDER) {
+      const def = FILL_MODE_DEFS[id];
+      const button = document.createElement("button");
+      button.className = "nib-button";
+      button.dataset.fillMode = id;
+      const icon = document.createElement("span");
+      icon.className = "icon";
+      icon.innerHTML = def.iconSvg;
+      const label = document.createElement("span");
+      label.className = "label";
+      label.appendChild(renderRuby(def.label));
+      button.append(icon, label);
+      button.setAttribute("aria-label", def.description);
+      button.addEventListener("click", () => {
+        this.fillMode = id;
+        this.setActiveTool("fill");
+        this.syncFillModes();
+        this.sound.play("poko");
+      });
+      track.appendChild(button);
+    }
+    panel.element.appendChild(row);
+    return panel;
+  }
+
+  /**
+   * 塗り方の選択状態を揃える。
+   * 選んだ塗り方は「塗る」ボタン自体のアイコンにも出す(色ボタンが今の色を出すのと同じ)。
+   * パネルを開かなくても、いま押したら何が起きるかが分かる。
+   */
+  private syncFillModes(): void {
+    for (const element of this.fillPanel.element.querySelectorAll<HTMLElement>(".nib-button")) {
+      element.classList.toggle("is-active", element.dataset.fillMode === this.fillMode);
+    }
+    const icon = this.buttons.get("fill")?.querySelector(".icon");
+    if (icon !== null && icon !== undefined) {
+      icon.innerHTML = this.fillMode === "area" ? (TOOL_DEFS.fill.iconSvg ?? "") : FILL_MODE_DEFS[this.fillMode].iconSvg;
+    }
+  }
+
   private createGridPanel(): Panel {
     const panel = new Panel(document.body, "grid-panel");
     panel.element.appendChild(this.createPaperRow());
@@ -1092,6 +1163,7 @@ class App {
     this.syncActive();
     this.syncHistoryButtons();
     this.syncGridButtons();
+    this.syncFillModes();
     this.syncMultiDraw();
     this.syncToolbarArrows();
   }
@@ -1159,8 +1231,10 @@ class App {
             ? this.eraserPanel
             : id === "grid"
               ? this.gridPanel
-              : null;
-    for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel]) {
+              : id === "fill"
+                ? this.fillPanel
+                : null;
+    for (const panel of [this.colorPanel, this.penPanel, this.eraserPanel, this.gridPanel, this.fillPanel]) {
       if (panel !== keep) panel.close();
     }
     switch (id) {
@@ -1186,6 +1260,8 @@ class App {
         break;
       case "fill":
         this.setActiveTool("fill");
+        // 塗り方(かこみ / しかく / まる)を選べるようにする。ペンの太さと同じ扱い。
+        this.fillPanel.toggle(button);
         this.sound.play("poko");
         break;
       case "undo":
@@ -1713,6 +1789,7 @@ class App {
         this.penPanel.close();
         this.eraserPanel.close();
         this.gridPanel.close();
+        this.fillPanel.close();
 
         // 置く操作中は紙に描かない。ドラッグ・ピンチは画面全体を覆う placeCanvas 側
         // (installPlaceInput)が拾うので、ここでは何もしない。
@@ -1725,6 +1802,20 @@ class App {
         }
 
         if (this.activeTool === "fill") {
+          if (isShapeMode(this.fillMode)) {
+            // なぞって範囲を決める。指を離すまでは仮の層に下見を出すだけで、絵は変えない。
+            this.shapeDrag = { id, mode: this.fillMode, x: point.x, y: point.y, endX: point.x, endY: point.y };
+            this.surface.previewShape(
+              this.fillMode,
+              point.x,
+              point.y,
+              point.x,
+              point.y,
+              this.color,
+              this.snapToCells,
+            );
+            return;
+          }
           // ビーズは円で置くので画素をたどる塗りつぶしだと背景へ漏れる。マス単位で広げる。
           const rect = this.snapToCells
             ? this.surface.fillCells(point.x, point.y, this.color)
@@ -1757,12 +1848,23 @@ class App {
       },
       onMove: (id, point) => {
         if (this.placingUnderlay) return;
+        const drag = this.shapeDrag;
+        if (drag !== null) {
+          if (drag.id !== id) return;
+          drag.endX = point.x;
+          drag.endY = point.y;
+          this.surface.previewShape(drag.mode, drag.x, drag.y, point.x, point.y, this.color, this.snapToCells);
+          return;
+        }
         if (!this.lastPoints.has(id)) return;
         this.lastPoints.set(id, point);
         this.surface.extendStroke(id, point.x, point.y, point.time, point.pressure);
       },
       onGestureStart: (id) => {
         if (this.placingUnderlay) return;
+        // ピンチに移った瞬間、なぞりかけの形も捨てる(線と同じ扱い)。
+        this.shapeDrag = null;
+        this.surface.clearShapePreview();
         // ピンチに移った瞬間、描きかけの線を捨てる(写真アプリの感覚で触った子を裏切らない)。
         if (id !== undefined) this.lastPoints.delete(id);
         this.surface.cancelStroke(id);
@@ -1801,6 +1903,27 @@ class App {
       },
       onUp: (id) => {
         if (this.placingUnderlay) return;
+        const drag = this.shapeDrag;
+        if (drag !== null) {
+          if (drag.id !== id) return;
+          this.shapeDrag = null;
+          const rect = this.surface.fillShape(
+            drag.mode,
+            drag.x,
+            drag.y,
+            drag.endX,
+            drag.endY,
+            this.color,
+            this.snapToCells,
+          );
+          if (rect !== null) {
+            this.surface.commit(rect);
+            this.sound.play("shu");
+            this.countStroke();
+            this.afterHistoryChange();
+          }
+          return;
+        }
         const last = this.lastPoints.get(id);
         if (last === undefined) return;
         this.lastPoints.delete(id);
