@@ -1,6 +1,6 @@
 // 描画面。Canvas 2D を 1 枚だけ持つ(Phase 0 はレイヤー無し)。
 // 「もどる」はパッチ方式(undoStack.ts 参照)。
-import { BEAD_COLS, BEAD_ROWS, CANVAS_HEIGHT, CANVAS_WIDTH } from "./model.ts";
+import { CANVAS_HEIGHT, CANVAS_WIDTH, type CellGrid } from "./model.ts";
 import { floodFill, type Rgba } from "./floodFill.ts";
 import { cellsBounds, shapeBox, shapeCells, type ShapeMode } from "./fillShape.ts";
 import { DirtyRect, MAX_STEPS, trimPatches, type FillRect, type UndoPatch } from "./undoStack.ts";
@@ -17,26 +17,27 @@ export interface StrokeStyle {
   /** ペン先の性質(速さ→太さ・入り抜き・手ブレ補正)。省略時はクレヨン(太さ一定)。 */
   dynamics?: NibDynamics;
   /**
-   * アイロンビーズ / ドット絵モード。マス単位でしか置けなくなる。
-   * 太さもペン先も効かない(1 マス = 1 ビーズなので、そもそも太さの概念が無い)。
+   * アイロンビーズ / ドット絵モードの格子。指定するとマス単位でしか置けなくなる。
+   * 太さもペン先も効かない(1 マス = 1 個なので、そもそも太さの概念が無い)。
+   * 省略 / undefined で従来どおりの自由な線。
    */
-  beads?: boolean;
+  cells?: CellGrid;
 }
 
-export const BEAD_CELL_WIDTH = CANVAS_WIDTH / BEAD_COLS;
-export const BEAD_CELL_HEIGHT = CANVAS_HEIGHT / BEAD_ROWS;
-
 /**
- * マスの色を見るための位置(中心から少しずらした 4 点)。
+ * マスの色を見るための位置。
  *
  * ビーズは真ん中に穴が空いているので **中心を見てはいけない**。
  * 穴＝透明なので、置いてあるのに「何も無い」と判定してしまう
  * (塗りつぶしが全面へ漏れる / スポイトが紙の色を吸う、という形で実際に出た)。
+ * そこで中心から少しずらした 4 点を見る。
+ * ドット絵は四角のベタ塗りで穴が無いので、中心 1 点で足りる。
  */
-export function beadProbePoints(col: number, row: number): [number, number][] {
-  const cx = (col + 0.5) * BEAD_CELL_WIDTH;
-  const cy = (row + 0.5) * BEAD_CELL_HEIGHT;
-  const ring = Math.min(BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT) * 0.3;
+export function cellProbePoints(grid: CellGrid, col: number, row: number): [number, number][] {
+  const cx = (col + 0.5) * grid.cellWidth;
+  const cy = (row + 0.5) * grid.cellHeight;
+  if (!grid.round) return [[cx, cy]];
+  const ring = Math.min(grid.cellWidth, grid.cellHeight) * 0.3;
   return [
     [cx + ring, cy],
     [cx - ring, cy],
@@ -46,10 +47,10 @@ export function beadProbePoints(col: number, row: number): [number, number][] {
 }
 
 /** 座標をマス番号へ。範囲外は端に丸める。 */
-export function beadCellOf(x: number, y: number): { col: number; row: number } {
+export function cellOf(grid: CellGrid, x: number, y: number): { col: number; row: number } {
   return {
-    col: Math.min(BEAD_COLS - 1, Math.max(0, Math.floor(x / BEAD_CELL_WIDTH))),
-    row: Math.min(BEAD_ROWS - 1, Math.max(0, Math.floor(y / BEAD_CELL_HEIGHT))),
+    col: Math.min(grid.cols - 1, Math.max(0, Math.floor(x / grid.cellWidth))),
+    row: Math.min(grid.rows - 1, Math.max(0, Math.floor(y / grid.cellHeight))),
   };
 }
 
@@ -207,73 +208,83 @@ export class Surface {
       // 末尾を少しだけ保持しておき、endStroke でまとめて細らせながら描く。
       pending: [{ x, y, speed: 0, pressure, distance: 0 }],
     });
-    if (style.beads === true) {
+    if (style.cells !== undefined) {
       const stroke = this.strokes.get(id);
-      if (stroke !== undefined) this.placeBead(stroke, x, y);
+      if (stroke !== undefined) this.placeCell(stroke, x, y);
     }
   }
 
   /** マス目に 1 つ置く。同じマスは 1 ストロークにつき 1 回だけ塗る。 */
-  private placeBead(stroke: StrokeState, x: number, y: number): void {
-    const { col, row } = beadCellOf(x, y);
-    const key = row * BEAD_COLS + col;
+  private placeCell(stroke: StrokeState, x: number, y: number): void {
+    const grid = stroke.style.cells;
+    if (grid === undefined) return;
+    const { col, row } = cellOf(grid, x, y);
+    const key = row * grid.cols + col;
     if (stroke.placedCells.has(key)) return;
     stroke.placedCells.add(key);
-    this.paintCell(col, row, stroke.style.erase ? null : stroke.style.color);
+    this.paintCell(grid, col, row, stroke.style.erase ? null : stroke.style.color);
     stroke.drewAnything = true;
-    stroke.dirty.add(col * BEAD_CELL_WIDTH, row * BEAD_CELL_HEIGHT, 0);
-    stroke.dirty.add((col + 1) * BEAD_CELL_WIDTH, (row + 1) * BEAD_CELL_HEIGHT, 0);
+    stroke.dirty.add(col * grid.cellWidth, row * grid.cellHeight, 0);
+    stroke.dirty.add((col + 1) * grid.cellWidth, (row + 1) * grid.cellHeight, 0);
   }
 
   /**
    * マス 1 つを塗る。color=null で消す。
-   * 実物のビーズに合わせて **穴あきの円** で描く。四角で埋めるより、
-   * 出来上がりの見た目に近く、図案としても数えやすい。
+   *
+   * ビーズは実物に合わせて **穴あきの円**。四角で埋めるより出来上がりの見た目に近く、
+   * 図案としても数えやすい。
+   * ドット絵は **マスいっぱいの四角**。隣のマスと隙間なく繋がることが要件なので、
+   * 境界は外側へ丸めて塗る(内側へ丸めると 1px の筋が残り、拡大したときに目立つ)。
    */
   private paintCell(
+    grid: CellGrid,
     col: number,
     row: number,
     color: string | null,
     ctx: CanvasRenderingContext2D = this.ctx,
   ): void {
     // マスの境界は実数なので、消すときは外側へ丸めて隣に残りかすを作らない。
-    const left = Math.floor(col * BEAD_CELL_WIDTH);
-    const top = Math.floor(row * BEAD_CELL_HEIGHT);
-    const right = Math.ceil((col + 1) * BEAD_CELL_WIDTH);
-    const bottom = Math.ceil((row + 1) * BEAD_CELL_HEIGHT);
+    const left = Math.floor(col * grid.cellWidth);
+    const top = Math.floor(row * grid.cellHeight);
+    const right = Math.ceil((col + 1) * grid.cellWidth);
+    const bottom = Math.ceil((row + 1) * grid.cellHeight);
 
     ctx.save();
     ctx.globalCompositeOperation = "destination-out";
     ctx.fillRect(left, top, right - left, bottom - top);
     if (color !== null) {
-      const cx = (col + 0.5) * BEAD_CELL_WIDTH;
-      const cy = (row + 0.5) * BEAD_CELL_HEIGHT;
-      const outer = Math.min(BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT) * 0.46;
       ctx.globalCompositeOperation = "source-over";
       ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(cx, cy, outer, 0, Math.PI * 2);
-      ctx.fill();
-      // 真ん中の穴。アイロンをかけると溶けて縮むので、小さめにして仕上がりに寄せる。
-      ctx.globalCompositeOperation = "destination-out";
-      ctx.beginPath();
-      ctx.arc(cx, cy, outer * 0.17, 0, Math.PI * 2);
-      ctx.fill();
+      if (grid.round) {
+        const cx = (col + 0.5) * grid.cellWidth;
+        const cy = (row + 0.5) * grid.cellHeight;
+        const outer = Math.min(grid.cellWidth, grid.cellHeight) * 0.46;
+        ctx.beginPath();
+        ctx.arc(cx, cy, outer, 0, Math.PI * 2);
+        ctx.fill();
+        // 真ん中の穴。アイロンをかけると溶けて縮むので、小さめにして仕上がりに寄せる。
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.beginPath();
+        ctx.arc(cx, cy, outer * 0.17, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillRect(left, top, right - left, bottom - top);
+      }
     }
     ctx.restore();
   }
 
   /**
-   * ビーズモードの塗りつぶし。**マス単位**で広がる。
+   * マス目モードの塗りつぶし。**マス単位**で広がる。
    * 円で置くと隙間ができるので、画素をたどる塗りつぶしでは背景ごと漏れてしまう。
-   * マスの中心の色を見て、同じ色のマスへ伝播させる。
+   * マスの色を見て、同じ色のマスへ伝播させる。
    */
-  fillCells(x: number, y: number, color: string): FillRect | null {
+  fillCells(grid: CellGrid, x: number, y: number, color: string): FillRect | null {
     const image = this.ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
     const hex = (value: number): string => value.toString(16).padStart(2, "0");
     /** そのマスに置かれているビーズの色。空なら "empty"。 */
     const colorAt = (col: number, row: number): string => {
-      for (const [px, py] of beadProbePoints(col, row)) {
+      for (const [px, py] of cellProbePoints(grid, col, row)) {
         const ix = Math.min(CANVAS_WIDTH - 1, Math.max(0, Math.floor(px)));
         const iy = Math.min(CANVAS_HEIGHT - 1, Math.max(0, Math.floor(py)));
         const offset = (iy * CANVAS_WIDTH + ix) * 4;
@@ -283,11 +294,11 @@ export class Surface {
       return "empty";
     };
 
-    const start = beadCellOf(x, y);
+    const start = cellOf(grid, x, y);
     const target = colorAt(start.col, start.row);
     if (target === color.toLowerCase()) return null;
 
-    const seen = new Uint8Array(BEAD_COLS * BEAD_ROWS);
+    const seen = new Uint8Array(grid.cols * grid.rows);
     const stack = [start];
     let minCol = start.col;
     let maxCol = start.col;
@@ -295,12 +306,12 @@ export class Surface {
     let maxRow = start.row;
     while (stack.length > 0) {
       const cell = stack.pop() as { col: number; row: number };
-      if (cell.col < 0 || cell.row < 0 || cell.col >= BEAD_COLS || cell.row >= BEAD_ROWS) continue;
-      const key = cell.row * BEAD_COLS + cell.col;
+      if (cell.col < 0 || cell.row < 0 || cell.col >= grid.cols || cell.row >= grid.rows) continue;
+      const key = cell.row * grid.cols + cell.col;
       if (seen[key] === 1) continue;
       if (colorAt(cell.col, cell.row) !== target) continue;
       seen[key] = 1;
-      this.paintCell(cell.col, cell.row, color);
+      this.paintCell(grid, cell.col, cell.row, color);
       if (cell.col < minCol) minCol = cell.col;
       if (cell.col > maxCol) maxCol = cell.col;
       if (cell.row < minRow) minRow = cell.row;
@@ -313,13 +324,13 @@ export class Surface {
       );
     }
 
-    const left = Math.floor(minCol * BEAD_CELL_WIDTH);
-    const top = Math.floor(minRow * BEAD_CELL_HEIGHT);
+    const left = Math.floor(minCol * grid.cellWidth);
+    const top = Math.floor(minRow * grid.cellHeight);
     return {
       x: left,
       y: top,
-      width: Math.ceil((maxCol + 1) * BEAD_CELL_WIDTH) - left,
-      height: Math.ceil((maxRow + 1) * BEAD_CELL_HEIGHT) - top,
+      width: Math.ceil((maxCol + 1) * grid.cellWidth) - left,
+      height: Math.ceil((maxRow + 1) * grid.cellHeight) - top,
     };
   }
 
@@ -327,18 +338,19 @@ export class Surface {
     const stroke = this.strokes.get(id);
     if (stroke === undefined) return;
 
-    if (stroke.style.beads === true) {
+    const cellGrid = stroke.style.cells;
+    if (cellGrid !== undefined) {
       // 速く動かすとイベントが飛ぶので、前の点との間を補間して通過したマスを埋める。
       // 手ブレ補正も速さによる太さも要らない(マスに吸着するので意味を持たない)。
       const steps = Math.ceil(
         Math.max(
-          Math.abs(x - stroke.lastX) / BEAD_CELL_WIDTH,
-          Math.abs(y - stroke.lastY) / BEAD_CELL_HEIGHT,
+          Math.abs(x - stroke.lastX) / cellGrid.cellWidth,
+          Math.abs(y - stroke.lastY) / cellGrid.cellHeight,
         ),
       );
       for (let i = 1; i <= Math.max(1, steps); i += 1) {
         const t = i / Math.max(1, steps);
-        this.placeBead(stroke, stroke.lastX + (x - stroke.lastX) * t, stroke.lastY + (y - stroke.lastY) * t);
+        this.placeCell(stroke, stroke.lastX + (x - stroke.lastX) * t, stroke.lastY + (y - stroke.lastY) * t);
       }
       stroke.lastX = x;
       stroke.lastY = y;
@@ -406,7 +418,7 @@ export class Surface {
     this.strokes.delete(id);
     this.clearWetInk(stroke);
 
-    if (stroke.style.beads === true) return stroke.dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
+    if (stroke.style.cells !== undefined) return stroke.dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
 
     // 手ブレ補正の分だけ描画点は指より後ろにいる。離した位置まで最後に伸ばして
     // 「線が指まで届かない」感じを消す。
@@ -746,10 +758,10 @@ export class Surface {
    * 半透明にしたり枠線だけにしたりはしない。押す前に見えているものと、指を離した
    * あとに残るものが違うと、子どもは「押したら変わった」と受け取ってしまう。
    */
-  previewShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, beads: boolean): void {
+  previewShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, cells: CellGrid | null): void {
     this.clearShapePreview();
     const box = shapeBox(x0, y0, x1, y1, CANVAS_WIDTH, CANVAS_HEIGHT);
-    const rect = this.paintShape(this.overlayCtx, mode, box, color, beads);
+    const rect = this.paintShape(this.overlayCtx, mode, box, color, cells);
     // 消す範囲は 1px 広めに取る(縁のアンチエイリアスが残らないように)。
     if (rect !== null) {
       this.shapePreviewDirty = {
@@ -773,10 +785,10 @@ export class Surface {
    * 「しかく」「まる」で塗る。なぞった 2 点が対角になる枠に収める。
    * 色の境界を一切見ないので、線が切れていても、ビーズの隙間があっても漏れない。
    */
-  fillShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, beads: boolean): FillRect | null {
+  fillShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, cells: CellGrid | null): FillRect | null {
     this.clearShapePreview();
     const box = shapeBox(x0, y0, x1, y1, CANVAS_WIDTH, CANVAS_HEIGHT);
-    return this.paintShape(this.ctx, mode, box, color, beads);
+    return this.paintShape(this.ctx, mode, box, color, cells);
   }
 
   /** 形を 1 つ描く。塗った矩形を返す(何も塗らなければ null)。 */
@@ -785,14 +797,14 @@ export class Surface {
     mode: ShapeMode,
     box: FillRect,
     color: string,
-    beads: boolean,
+    cells: CellGrid | null,
   ): FillRect | null {
     if (box.width <= 0 || box.height <= 0) return null;
-    if (beads) {
-      // ビーズは 1 マス = 1 個。欠けたビーズが出ると図案として作れなくなる。
-      const cells = shapeCells(mode, box, BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT, BEAD_COLS, BEAD_ROWS);
-      for (const cell of cells) this.paintCell(cell.col, cell.row, color, ctx);
-      return cellsBounds(cells, BEAD_CELL_WIDTH, BEAD_CELL_HEIGHT);
+    if (cells !== null) {
+      // マス目モードは 1 マス = 1 個。欠けた半端なマスが出ると図案として使えなくなる。
+      const filled = shapeCells(mode, box, cells.cellWidth, cells.cellHeight, cells.cols, cells.rows);
+      for (const cell of filled) this.paintCell(cells, cell.col, cell.row, color, ctx);
+      return cellsBounds(filled, cells.cellWidth, cells.cellHeight);
     }
     ctx.save();
     ctx.globalCompositeOperation = "source-over";
@@ -809,13 +821,13 @@ export class Surface {
   }
 
   /**
-   * ビーズモードのスポイト。マスに置かれているビーズの色を返す。
+   * マス目モードのスポイト。マスに置かれている色を返す。
    * 何も置いていないマスなら null(＝色を変えない)。
-   * ここで中心の画素を読むと、穴(透明)を拾って紙の色を吸ってしまう。
+   * ビーズで中心の画素を読むと、穴(透明)を拾って紙の色を吸ってしまう。
    */
-  pickCell(x: number, y: number): string | null {
-    const { col, row } = beadCellOf(x, y);
-    for (const [px, py] of beadProbePoints(col, row)) {
+  pickCell(grid: CellGrid, x: number, y: number): string | null {
+    const { col, row } = cellOf(grid, x, y);
+    for (const [px, py] of cellProbePoints(grid, col, row)) {
       const ix = Math.min(CANVAS_WIDTH - 1, Math.max(0, Math.floor(px)));
       const iy = Math.min(CANVAS_HEIGHT - 1, Math.max(0, Math.floor(py)));
       const data = this.ctx.getImageData(ix, iy, 1, 1).data;

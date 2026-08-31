@@ -17,6 +17,7 @@ import {
   CANVAS_WIDTH,
   createWork,
   snapshotOf,
+  type CellGrid,
   type SnapshotReason,
   type WorkRecord,
 } from "./core/model.ts";
@@ -1045,7 +1046,7 @@ class App {
     // 写真だけは実体(underlayRecord)が無いと隠しようがないので別条件。方眼・ビーズは
     // gridMode がそのまま「置いてある」印になる。
     const hasUnderlay = this.gridMode === "grid" || this.gridMode === "beads" ||
-      (this.gridMode === "photo" && this.underlayRecord !== null);
+      this.gridMode === "dot" || (this.gridMode === "photo" && this.underlayRecord !== null);
     const visible = hasUnderlay && !this.placingUnderlay;
     this.underlayToggleButton?.classList.toggle("is-visible", visible);
     if (this.underlayToggleButton !== null) {
@@ -1335,8 +1336,8 @@ class App {
     // (別の下敷きを選んだら見えている状態から始める。保存もしない方針と揃える)。
     this.underlayHiddenByUser = false;
     // ビーズへ入ったら、選んでいた色をいちばん近いビーズ色へ寄せる
-    // (実物に無い色のまま描かせない)。
-    if (GRID_MODES[mode].snap) {
+    // (実物に無い色のまま描かせない)。ドット絵は実物の制約が無いので寄せない。
+    if (mode === "beads") {
       this.color = nearestBeadColor(this.color);
       this.syncColorChip();
       this.syncSwatches();
@@ -1347,16 +1348,30 @@ class App {
     this.persistProgress();
   }
 
+  /** マスに吸着するモードなら、その格子。自由に描けるモードでは null。 */
+  private get cellGrid(): CellGrid | null {
+    return GRID_MODES[this.gridMode].cells;
+  }
+
   private get snapToCells(): boolean {
-    return GRID_MODES[this.gridMode].snap;
+    return this.cellGrid !== null;
   }
 
   private syncGridButtons(): void {
-    this.colorPanel.element.classList.toggle("is-beads", this.snapToCells);
-    // マス目の線は grid / beads だけの絵柄。photo は underlayCanvas 側で見せるので、
+    // 色見本をビーズの色に差し替えるのは beads だけ。ドット絵は実物の制約が無いので
+    // ふつうの色見本のまま使わせる。
+    this.colorPanel.element.classList.toggle("is-beads", this.gridMode === "beads");
+    // マス目の線は grid / beads / dot だけの絵柄。photo は underlayCanvas 側で見せるので、
     // ここでは重ねない(重ねると写真の上に無関係な線が乗ってしまう)。
-    this.gridLayer.classList.toggle("is-on", this.gridMode === "grid" || this.gridMode === "beads");
+    this.gridLayer.classList.toggle(
+      "is-on",
+      this.gridMode === "grid" || this.gridMode === "beads" || this.gridMode === "dot",
+    );
     this.gridLayer.classList.toggle("is-beads", this.gridMode === "beads");
+    this.gridLayer.classList.toggle("is-dot", this.gridMode === "dot");
+    // ドット絵のときだけ拡大の補間を切る。ここを滑らかに伸ばすと、せっかく四角で
+    // 置いたマスの角がぼやけて、ドット絵にした意味が無くなる。
+    this.paperCanvas.classList.toggle("is-pixelated", this.gridMode === "dot");
     // 写真の下敷きは、下敷きが実際にあるときだけ見せる。
     this.underlayCanvas.classList.toggle("is-on", this.gridMode === "photo" && this.underlayRecord !== null);
     // ツールバーのボタンには、いま選んでいる下敷きの絵を出す。
@@ -1812,13 +1827,14 @@ class App {
               point.x,
               point.y,
               this.color,
-              this.snapToCells,
+              this.cellGrid,
             );
             return;
           }
           // ビーズは円で置くので画素をたどる塗りつぶしだと背景へ漏れる。マス単位で広げる。
-          const rect = this.snapToCells
-            ? this.surface.fillCells(point.x, point.y, this.color)
+          const cellGrid = this.cellGrid;
+          const rect = cellGrid !== null
+            ? this.surface.fillCells(cellGrid, point.x, point.y, this.color)
             : this.surface.fill(point.x, point.y, hexToRgba(this.color));
           if (rect !== null) {
             this.surface.commit(rect);
@@ -1840,7 +1856,7 @@ class App {
             erase: this.activeTool === "eraser",
             // 消しゴムは太さ一定のまま(消す量が変わると狙って消せない)。
             dynamics: this.activeTool === "eraser" ? undefined : NIB_DEFS[this.nib].dynamics,
-            beads: this.snapToCells,
+            ...(this.cellGrid === null ? {} : { cells: this.cellGrid }),
           },
           point.time,
           point.pressure,
@@ -1853,7 +1869,7 @@ class App {
           if (drag.id !== id) return;
           drag.endX = point.x;
           drag.endY = point.y;
-          this.surface.previewShape(drag.mode, drag.x, drag.y, point.x, point.y, this.color, this.snapToCells);
+          this.surface.previewShape(drag.mode, drag.x, drag.y, point.x, point.y, this.color, this.cellGrid);
           return;
         }
         if (!this.lastPoints.has(id)) return;
@@ -1914,7 +1930,7 @@ class App {
             drag.endX,
             drag.endY,
             this.color,
-            this.snapToCells,
+            this.cellGrid,
           );
           if (rect !== null) {
             this.surface.commit(rect);
@@ -2117,7 +2133,8 @@ class App {
   /** その場所の色を吸う。吸えたら true。 */
   private pickColorAt(x: number, y: number): boolean {
     // ビーズはマスの輪を見る。中心は穴(透明)なので紙の色を吸ってしまう。
-    const picked = this.snapToCells ? this.surface.pickCell(x, y) : this.surface.pick(x, y);
+    const pickGrid = this.cellGrid;
+    const picked = pickGrid !== null ? this.surface.pickCell(pickGrid, x, y) : this.surface.pick(x, y);
     if (picked === null) return false;
     this.color = picked;
     this.syncSwatches();

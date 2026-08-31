@@ -30,6 +30,48 @@ export const CANVAS_HEIGHT = 1181;
 export const BEAD_COLS = 58;
 export const BEAD_ROWS = 39;
 
+/**
+ * ドット絵モードのマス数。ビーズのちょうど倍にしてある。
+ * 1748x1181 を 116x78 で割ると 1 マス ≒ 15px。ビーズと同じ「マスに置く」操作のまま、
+ * 絵として成立する細かさになる下限がこのあたり。これ以上細かくすると、指で 1 マスを
+ * 狙えなくなる(拡大が前提になってしまい、子どもの道具ではなくなる)。
+ *
+ * ゲーム素材のような「16x16 ちょうどの PNG」が要る用途はこの方式では作れない。
+ * 大きい紙の上のマスなので、書き出すときに 1748px を 116px へ縮めることになり、
+ * 割り切れずにフチが濁るため。そちらはキャンバスサイズ自体を小さくして解く
+ * (＝任意サイズのキャンバスを作れるようになってからの話)。
+ */
+export const DOT_COLS = 116;
+export const DOT_ROWS = 78;
+
+/**
+ * 「マスに 1 つずつ置く」系のモードが共有する格子。
+ *
+ * ビーズもドット絵も操作はまったく同じで、違うのは **マスの細かさと 1 マスの絵柄** だけ
+ * なので、その 2 つだけを持たせて描画側は 1 本の実装で済ませる。
+ */
+export interface CellGrid {
+  cols: number;
+  rows: number;
+  cellWidth: number;
+  cellHeight: number;
+  /** true でアイロンビーズ(穴あきの円)、false でドット絵(四角のベタ塗り)。 */
+  round: boolean;
+}
+
+function createCellGrid(cols: number, rows: number, round: boolean): CellGrid {
+  return {
+    cols,
+    rows,
+    cellWidth: CANVAS_WIDTH / cols,
+    cellHeight: CANVAS_HEIGHT / rows,
+    round,
+  };
+}
+
+export const BEAD_GRID: CellGrid = createCellGrid(BEAD_COLS, BEAD_ROWS, true);
+export const DOT_GRID: CellGrid = createCellGrid(DOT_COLS, DOT_ROWS, false);
+
 /** スキーマ変更時に上げる。読み込み時に不一致なら復元しない(壊れたデータで起動しない)。 */
 export const SCHEMA_VERSION = 1;
 

@@ -244,7 +244,7 @@ body {
   background-size: 6.25% 9.25%;
 }
 
-/* アイロンビーズ / ドット絵モードのマス目。58x39 マス(1 マス ≒ 30px)。
+/* アイロンビーズのマス目。58x39 マス(1 マス ≒ 30px)。
    実物のペグボード(29x29)がちょうど 2 枚ぶん入る大きさ。 */
 .grid-layer.is-beads {
   background-image:
@@ -253,8 +253,26 @@ body {
   background-size: 1.7241% 2.5641%;
 }
 
+/* ドット絵モードのマス目。116x78 マス(ビーズのちょうど倍・1 マス ≒ 15px)。
+   線はビーズよりはっきり薄くする: マスが倍細かいぶん、同じ濃さだと線の面積が勝って
+   画面全体が青灰色に濁り、置いた色が見えなくなるため。 */
+.grid-layer.is-dot {
+  background-image:
+    repeating-linear-gradient(to right, rgba(61, 55, 48, 0.12) 0 1px, transparent 1px 100%),
+    repeating-linear-gradient(to bottom, rgba(61, 55, 48, 0.12) 0 1px, transparent 1px 100%);
+  background-size: 0.8621% 1.2821%;
+}
+
 .grid-layer.is-on {
   display: block;
+}
+
+/* ドット絵モードのときだけ拡大の補間を切る。
+   キャンバス(1748x1181)は画面より小さいので、ふだんは滑らかに引き伸ばされている。
+   それはふつうの絵では正しいが、ドット絵ではマスの角がぼやけて意味が無くなるので、
+   ここだけ最近傍にしてカクカクのまま見せる。 */
+.paper.is-pixelated {
+  image-rendering: pixelated;
 }
 
 /* 「かくす」ボタンで止めた表示。underlay-layer 側の is-hidden-by-user と同じ作法
