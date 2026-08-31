@@ -105,7 +105,12 @@ body {
   flex: 1;
   display: flex;
   align-items: center;
+  /* 中身が収まるときは中央寄せ。溢れたら先頭寄せへ落とす(safe)。
+     ただの center だと、溢れた分が左右へ均等にはみ出し、**左側は scrollLeft を
+     負にできないので二度と戻れなくなる**(先頭の項目が半分欠けたまま掴めない)。
+     行の項目が増えて初めて溢れたときに出る。 */
   justify-content: center;
+  justify-content: safe center;
   min-height: 0;
   min-width: 0;
   padding: 10px;
