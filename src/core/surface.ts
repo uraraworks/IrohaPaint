@@ -133,30 +133,36 @@ export class Surface {
    */
   private shapePreviewDirty: FillRect | null = null;
 
-  constructor(canvas: HTMLCanvasElement) {
-    canvas.width = CANVAS_WIDTH;
-    canvas.height = CANVAS_HEIGHT;
+  /** この Surface が扱うキャンバスの画素寸法。作品ごとに違いうるので固定定数にしない。 */
+  readonly width: number;
+  readonly height: number;
+
+  constructor(canvas: HTMLCanvasElement, width: number = CANVAS_WIDTH, height: number = CANVAS_HEIGHT) {
+    this.width = width;
+    this.height = height;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
     this.canvas = canvas;
     this.ctx = ctx;
     const backup = document.createElement("canvas");
-    backup.width = CANVAS_WIDTH;
-    backup.height = CANVAS_HEIGHT;
+    backup.width = width;
+    backup.height = height;
     const backupCtx = backup.getContext("2d", { willReadFrequently: true });
     if (backupCtx === null) throw new Error("2D コンテキストを取得できませんでした");
     this.backup = backup;
     this.backupCtx = backupCtx;
     const overlay = document.createElement("canvas");
-    overlay.width = CANVAS_WIDTH;
-    overlay.height = CANVAS_HEIGHT;
+    overlay.width = width;
+    overlay.height = height;
     overlay.className = "paper-overlay";
     const overlayCtx = overlay.getContext("2d");
     if (overlayCtx === null) throw new Error("2D コンテキストを取得できませんでした");
     this.overlay = overlay;
     this.overlayCtx = overlayCtx;
     this.clearToPaper();
-    this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+    this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
   }
 
   get canUndo(): boolean {
@@ -170,7 +176,7 @@ export class Surface {
   clearToPaper(): void {
     this.ctx.globalCompositeOperation = "source-over";
     this.ctx.fillStyle = PAPER_COLOR;
-    this.ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    this.ctx.fillRect(0, 0, this.width, this.height);
   }
 
   // --- ストローク -------------------------------------------------------
@@ -280,14 +286,14 @@ export class Surface {
    * マスの色を見て、同じ色のマスへ伝播させる。
    */
   fillCells(grid: CellGrid, x: number, y: number, color: string): FillRect | null {
-    const image = this.ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const image = this.ctx.getImageData(0, 0, this.width, this.height);
     const hex = (value: number): string => value.toString(16).padStart(2, "0");
     /** そのマスに置かれているビーズの色。空なら "empty"。 */
     const colorAt = (col: number, row: number): string => {
       for (const [px, py] of cellProbePoints(grid, col, row)) {
-        const ix = Math.min(CANVAS_WIDTH - 1, Math.max(0, Math.floor(px)));
-        const iy = Math.min(CANVAS_HEIGHT - 1, Math.max(0, Math.floor(py)));
-        const offset = (iy * CANVAS_WIDTH + ix) * 4;
+        const ix = Math.min(this.width - 1, Math.max(0, Math.floor(px)));
+        const iy = Math.min(this.height - 1, Math.max(0, Math.floor(py)));
+        const offset = (iy * this.width + ix) * 4;
         if ((image.data[offset + 3] ?? 0) < 8) continue;
         return `#${hex(image.data[offset] ?? 0)}${hex(image.data[offset + 1] ?? 0)}${hex(image.data[offset + 2] ?? 0)}`;
       }
@@ -398,7 +404,7 @@ export class Surface {
       if (stroke === undefined) continue;
       this.clearWetInk(stroke);
       this.strokes.delete(key);
-      const rect = stroke.dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
+      const rect = stroke.dirty.toRect(this.width, this.height);
       if (rect === null) continue;
       // 控え(1 手前の状態)から描き戻すので、undo 履歴は消費しない。
       this.ctx.globalCompositeOperation = "source-over";
@@ -418,7 +424,7 @@ export class Surface {
     this.strokes.delete(id);
     this.clearWetInk(stroke);
 
-    if (stroke.style.cells !== undefined) return stroke.dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
+    if (stroke.style.cells !== undefined) return stroke.dirty.toRect(this.width, this.height);
 
     // 手ブレ補正の分だけ描画点は指より後ろにいる。離した位置まで最後に伸ばして
     // 「線が指まで届かない」感じを消す。
@@ -447,7 +453,7 @@ export class Surface {
       const width = Math.max(2, stroke.style.size * (stroke.style.dynamics === undefined ? 1 : 0.6));
       this.paintDot(stroke.lastX, stroke.lastY, width, stroke.style);
     }
-    return stroke.dirty.toRect(CANVAS_WIDTH, CANVAS_HEIGHT);
+    return stroke.dirty.toRect(this.width, this.height);
   }
 
   /** 保持中の末尾を仮のインクとして描く。指に線が遅れてついてくるのを防ぐ。 */
@@ -502,8 +508,8 @@ export class Surface {
     stroke.overlayDirty = {
       x,
       y,
-      width: Math.min(CANVAS_WIDTH, Math.ceil(maxX + pad)) - x,
-      height: Math.min(CANVAS_HEIGHT, Math.ceil(maxY + pad)) - y,
+      width: Math.min(this.width, Math.ceil(maxX + pad)) - x,
+      height: Math.min(this.height, Math.ceil(maxY + pad)) - y,
     };
   }
 
@@ -693,7 +699,7 @@ export class Surface {
   /** 控えの指定矩形を現在のキャンバスで置き換える。消しゴム跡(透明)も含めて写す。 */
   /** 仮インクを全部消す(作品の切り替え・やり直し時)。 */
   private clearOverlay(): void {
-    this.overlayCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    this.overlayCtx.clearRect(0, 0, this.width, this.height);
     for (const stroke of this.strokes.values()) stroke.overlayDirty = null;
     this.shapePreviewDirty = null;
   }
@@ -744,8 +750,8 @@ export class Surface {
 
   /** 「ぬりつぶし」。塗った矩形を返す(何も塗らなければ null)。 */
   fill(x: number, y: number, color: Rgba): FillRect | null {
-    const image = this.ctx.getImageData(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
-    const rect = floodFill(image.data, CANVAS_WIDTH, CANVAS_HEIGHT, Math.round(x), Math.round(y), color);
+    const image = this.ctx.getImageData(0, 0, this.width, this.height);
+    const rect = floodFill(image.data, this.width, this.height, Math.round(x), Math.round(y), color);
     if (rect === null) return null;
     this.ctx.globalCompositeOperation = "source-over";
     this.ctx.putImageData(image, 0, 0);
@@ -760,15 +766,15 @@ export class Surface {
    */
   previewShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, cells: CellGrid | null): void {
     this.clearShapePreview();
-    const box = shapeBox(x0, y0, x1, y1, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const box = shapeBox(x0, y0, x1, y1, this.width, this.height);
     const rect = this.paintShape(this.overlayCtx, mode, box, color, cells);
     // 消す範囲は 1px 広めに取る(縁のアンチエイリアスが残らないように)。
     if (rect !== null) {
       this.shapePreviewDirty = {
         x: Math.max(0, rect.x - 1),
         y: Math.max(0, rect.y - 1),
-        width: Math.min(CANVAS_WIDTH, rect.width + 2),
-        height: Math.min(CANVAS_HEIGHT, rect.height + 2),
+        width: Math.min(this.width, rect.width + 2),
+        height: Math.min(this.height, rect.height + 2),
       };
     }
   }
@@ -787,7 +793,7 @@ export class Surface {
    */
   fillShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, cells: CellGrid | null): FillRect | null {
     this.clearShapePreview();
-    const box = shapeBox(x0, y0, x1, y1, CANVAS_WIDTH, CANVAS_HEIGHT);
+    const box = shapeBox(x0, y0, x1, y1, this.width, this.height);
     return this.paintShape(this.ctx, mode, box, color, cells);
   }
 
@@ -828,8 +834,8 @@ export class Surface {
   pickCell(grid: CellGrid, x: number, y: number): string | null {
     const { col, row } = cellOf(grid, x, y);
     for (const [px, py] of cellProbePoints(grid, col, row)) {
-      const ix = Math.min(CANVAS_WIDTH - 1, Math.max(0, Math.floor(px)));
-      const iy = Math.min(CANVAS_HEIGHT - 1, Math.max(0, Math.floor(py)));
+      const ix = Math.min(this.width - 1, Math.max(0, Math.floor(px)));
+      const iy = Math.min(this.height - 1, Math.max(0, Math.floor(py)));
       const data = this.ctx.getImageData(ix, iy, 1, 1).data;
       if ((data[3] ?? 0) < 8) continue;
       const hex = (value: number): string => value.toString(16).padStart(2, "0");
@@ -842,7 +848,7 @@ export class Surface {
   pick(x: number, y: number): string | null {
     const px = Math.round(x);
     const py = Math.round(y);
-    if (px < 0 || py < 0 || px >= CANVAS_WIDTH || py >= CANVAS_HEIGHT) return null;
+    if (px < 0 || py < 0 || px >= this.width || py >= this.height) return null;
     const data = this.ctx.getImageData(px, py, 1, 1).data;
     const alpha = data[3] ?? 0;
     if (alpha < 8) return PAPER_COLOR;
@@ -855,12 +861,12 @@ export class Surface {
   /** 透明部分を紙の色で埋めた PNG を作る(保存・書き出し用)。 */
   async toPng(): Promise<Blob> {
     const flat = document.createElement("canvas");
-    flat.width = CANVAS_WIDTH;
-    flat.height = CANVAS_HEIGHT;
+    flat.width = this.width;
+    flat.height = this.height;
     const ctx = flat.getContext("2d");
     if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
     ctx.fillStyle = PAPER_COLOR;
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillRect(0, 0, this.width, this.height);
     ctx.drawImage(this.canvas, 0, 0);
     return await new Promise<Blob>((resolve, reject) => {
       flat.toBlob((blob) => {
@@ -883,12 +889,12 @@ export class Surface {
    */
   async toExportPng(texture: HTMLCanvasElement | OffscreenCanvas | null): Promise<Blob> {
     const flat = document.createElement("canvas");
-    flat.width = CANVAS_WIDTH;
-    flat.height = CANVAS_HEIGHT;
+    flat.width = this.width;
+    flat.height = this.height;
     const ctx = flat.getContext("2d");
     if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
     ctx.fillStyle = PAPER_COLOR;
-    ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    ctx.fillRect(0, 0, this.width, this.height);
     ctx.drawImage(this.canvas, 0, 0);
     if (texture !== null) {
       ctx.globalCompositeOperation = "multiply";
@@ -907,10 +913,10 @@ export class Surface {
    * 一覧用の小さい PNG。原寸を並べると読み込みだけで重くなるので必ずこちらを使う。
    */
   async toThumbnail(maxWidth = 360): Promise<Blob> {
-    const scale = maxWidth / CANVAS_WIDTH;
+    const scale = maxWidth / this.width;
     const small = document.createElement("canvas");
-    small.width = Math.round(CANVAS_WIDTH * scale);
-    small.height = Math.round(CANVAS_HEIGHT * scale);
+    small.width = Math.round(this.width * scale);
+    small.height = Math.round(this.height * scale);
     const ctx = small.getContext("2d");
     if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
     ctx.fillStyle = PAPER_COLOR;
@@ -931,7 +937,7 @@ export class Surface {
     this.patches = [];
     this.redoPatches = [];
     this.strokes.clear();
-    this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+    this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
   }
 
   /** 保存済み PNG を描き戻す(リロード復元)。 */
@@ -940,14 +946,14 @@ export class Surface {
     try {
       this.clearToPaper();
       this.ctx.globalCompositeOperation = "source-over";
-      this.ctx.drawImage(bitmap, 0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      this.ctx.drawImage(bitmap, 0, 0, this.width, this.height);
     } finally {
       bitmap.close();
     }
     this.patches = [];
     this.redoPatches = [];
     this.strokes.clear();
-    this.syncBackup({ x: 0, y: 0, width: CANVAS_WIDTH, height: CANVAS_HEIGHT });
+    this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
   }
 }
 

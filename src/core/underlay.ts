@@ -73,15 +73,22 @@ export function fitSize(
  * cover ではなく contain にする理由: まず全部見えることが「失敗しない」。
  * 寄せたい所は後から「置く」操作で拡大させる。
  * 画像がキャンバスより小さい場合も contain(＝拡大して収める)でよい。
+ *
+ * canvasWidth/canvasHeight は作品ごとのキャンバス寸法。省略時は既定(横長 1748x1181)。
  */
-export function fitPlacement(width: number, height: number): UnderlayPlacement {
-  const scale = Math.min(CANVAS_WIDTH / width, CANVAS_HEIGHT / height);
+export function fitPlacement(
+  width: number,
+  height: number,
+  canvasWidth: number = CANVAS_WIDTH,
+  canvasHeight: number = CANVAS_HEIGHT,
+): UnderlayPlacement {
+  const scale = Math.min(canvasWidth / width, canvasHeight / height);
   const scaledWidth = width * scale;
   const scaledHeight = height * scale;
   return {
     scale,
-    tx: (CANVAS_WIDTH - scaledWidth) / 2,
-    ty: (CANVAS_HEIGHT - scaledHeight) / 2,
+    tx: (canvasWidth - scaledWidth) / 2,
+    ty: (canvasHeight - scaledHeight) / 2,
   };
 }
 
@@ -109,8 +116,10 @@ export function clampPlacement(
   placement: UnderlayPlacement,
   width: number,
   height: number,
+  canvasWidth: number = CANVAS_WIDTH,
+  canvasHeight: number = CANVAS_HEIGHT,
 ): UnderlayPlacement {
-  const fit = fitPlacement(width, height);
+  const fit = fitPlacement(width, height, canvasWidth, canvasHeight);
   const scale = clamp(
     placement.scale,
     fit.scale * UNDERLAY_MIN_SCALE_RATIO,
@@ -119,13 +128,13 @@ export function clampPlacement(
   const scaledWidth = width * scale;
   const scaledHeight = height * scale;
   // 必ず重なっていてほしい量。紙の 1/4、ただし下敷きの幅(高さ)がそれより小さければそちらを使う。
-  const requiredX = Math.min(CANVAS_WIDTH / 4, scaledWidth);
-  const requiredY = Math.min(CANVAS_HEIGHT / 4, scaledHeight);
-  // requiredX = 0 のとき(旧仕様)は [-scaledWidth, CANVAS_WIDTH] と一致する = 点で接するところまで許す。
+  const requiredX = Math.min(canvasWidth / 4, scaledWidth);
+  const requiredY = Math.min(canvasHeight / 4, scaledHeight);
+  // requiredX = 0 のとき(旧仕様)は [-scaledWidth, canvasWidth] と一致する = 点で接するところまで許す。
   return {
     scale,
-    tx: clamp(placement.tx, requiredX - scaledWidth, CANVAS_WIDTH - requiredX),
-    ty: clamp(placement.ty, requiredY - scaledHeight, CANVAS_HEIGHT - requiredY),
+    tx: clamp(placement.tx, requiredX - scaledWidth, canvasWidth - requiredX),
+    ty: clamp(placement.ty, requiredY - scaledHeight, canvasHeight - requiredY),
   };
 }
 
@@ -141,8 +150,10 @@ export function scaleAt(
   anchorX: number,
   anchorY: number,
   factor: number,
+  canvasWidth: number = CANVAS_WIDTH,
+  canvasHeight: number = CANVAS_HEIGHT,
 ): UnderlayPlacement {
-  const fit = fitPlacement(width, height);
+  const fit = fitPlacement(width, height, canvasWidth, canvasHeight);
   const scale = clamp(
     placement.scale * factor,
     fit.scale * UNDERLAY_MIN_SCALE_RATIO,
@@ -152,7 +163,7 @@ export function scaleAt(
   const applied = scale / placement.scale;
   const tx = anchorX - applied * (anchorX - placement.tx);
   const ty = anchorY - applied * (anchorY - placement.ty);
-  return clampPlacement({ scale, tx, ty }, width, height);
+  return clampPlacement({ scale, tx, ty }, width, height, canvasWidth, canvasHeight);
 }
 
 export function createUnderlay(

@@ -2,7 +2,7 @@
 //
 // 方眼もビーズもドット絵も「マス目の上に描く」という同じ系統なので、道具を増やさず
 // 1 つのサブメニューにまとめる。
-import { BEAD_GRID, DOT_GRID, type CellGrid } from "./model.ts";
+import { cellGridFor, type CellGrid } from "./model.ts";
 import type { LabelPart } from "./tools.ts";
 
 export type GridMode = "off" | "grid" | "beads" | "dot" | "photo";
@@ -12,10 +12,12 @@ export interface GridModeDef {
   label: LabelPart[];
   iconSvg: string;
   /**
-   * マスに吸着して置くモードなら、その格子。null なら自由に描ける。
+   * マスに吸着して置くモードなら、その種類("beads" | "dot")。null なら自由に描ける。
    * 吸着するモードでは太さもペン先も効かない(1 マス = 1 個なので意味を持たない)。
+   * 実際の格子(CellGrid)は作品の寸法に依存するので、ここでは種類だけ持ち、
+   * 使う側は cellsFor(mode, canvasWidth, canvasHeight) で引く。
    */
-  cells: CellGrid | null;
+  cellKind: "beads" | "dot" | null;
 }
 
 export const GRID_MODES: Readonly<Record<GridMode, GridModeDef>> = {
@@ -28,7 +30,7 @@ export const GRID_MODES: Readonly<Record<GridMode, GridModeDef>> = {
         stroke-width="2"/>
       <path d="M9 23L23 9" stroke="#3d3730" stroke-width="2" stroke-linecap="round"/>
     </svg>`,
-    cells: null,
+    cellKind: null,
   },
   // 下敷きの方眼。絵はマスに吸着しない(あくまで目安)。
   grid: {
@@ -40,7 +42,7 @@ export const GRID_MODES: Readonly<Record<GridMode, GridModeDef>> = {
       <path d="M12.3 5v22M19.6 5v22M5 12.3h22M5 19.6h22" stroke="#3d3730" stroke-width="1.6"
         opacity="0.55"/>
     </svg>`,
-    cells: null,
+    cellKind: null,
   },
   // アイロンビーズ。1 マス = 1 ビーズで、実物を並べるための図案になる。
   beads: {
@@ -54,7 +56,7 @@ export const GRID_MODES: Readonly<Record<GridMode, GridModeDef>> = {
       <circle cx="11" cy="21" r="3.4" fill="#4aa3df" stroke="#3d3730" stroke-width="1.6"/>
       <circle cx="21" cy="21" r="3.4" fill="#8cc152" stroke="#3d3730" stroke-width="1.6"/>
     </svg>`,
-    cells: BEAD_GRID,
+    cellKind: "beads",
   },
   // ドット絵。ビーズと操作はまったく同じで、マスが倍細かく、1 マスが四角のベタ塗り。
   // 隣のマスと隙間なく繋がるので、拡大しても輪郭がはっきりしたドット絵になる。
@@ -70,7 +72,7 @@ export const GRID_MODES: Readonly<Record<GridMode, GridModeDef>> = {
       <rect x="19" y="19" width="6" height="6" fill="#8cc152"/>
       <rect x="13" y="13" width="6" height="6" fill="#3d3730"/>
     </svg>`,
-    cells: DOT_GRID,
+    cellKind: "dot",
   },
   // 取り込んだ写真を下敷きにして、その上からなぞって描く。
   // マス目と違って自由な太さ・ペン先のまま描けるので snap は false。
@@ -84,15 +86,25 @@ export const GRID_MODES: Readonly<Record<GridMode, GridModeDef>> = {
       <path d="M7 23L13 15L17 19L21 13L26 23Z" fill="#8cc152" stroke="#3d3730" stroke-width="2"
         stroke-linejoin="round" stroke-linecap="round"/>
     </svg>`,
-    cells: null,
+    cellKind: null,
   },
 };
 
 export const GRID_MODE_ORDER: readonly GridMode[] = ["off", "grid", "beads", "dot", "photo"];
 
+/**
+ * モードの格子を、作品の寸法に合わせて返す。吸着しないモードなら null。
+ * cellKind から cellGridFor() を呼ぶだけの薄いラッパーだが、呼び出し側が
+ * model.ts の存在を知らずに済むよう grid.ts 側にまとめる。
+ */
+export function cellsFor(mode: GridMode, canvasWidth: number, canvasHeight: number): CellGrid | null {
+  const kind = GRID_MODES[mode].cellKind;
+  return kind === null ? null : cellGridFor(kind, canvasWidth, canvasHeight);
+}
+
 /** マスに吸着するモードか。 */
 export function snapsToCells(mode: GridMode): boolean {
-  return GRID_MODES[mode].cells !== null;
+  return GRID_MODES[mode].cellKind !== null;
 }
 
 export function isGridMode(value: unknown): value is GridMode {

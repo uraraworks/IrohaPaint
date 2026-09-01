@@ -9,7 +9,7 @@
 import "./style.css";
 import { BEAD_COLORS, CRAYON_COLORS, ERASER_SIZES, nearestBeadColor, PEN_SIZES } from "./core/palette.ts";
 import { NIB_DEFS, NIB_ORDER, type NibId } from "./core/brush.ts";
-import { GRID_MODES, GRID_MODE_ORDER, type GridMode } from "./core/grid.ts";
+import { cellsFor, GRID_MODES, GRID_MODE_ORDER, type GridMode } from "./core/grid.ts";
 import { createPaperTexture, PAPER_KINDS, PAPER_KIND_ORDER, type PaperKind } from "./core/paper.ts";
 import {
   appendSnapshot,
@@ -173,7 +173,14 @@ class App {
   private readonly toolbar: HTMLElement;
   private readonly toolbarBar: HTMLElement;
   private toolbarScroll: HScrollControl | null = null;
-  private readonly surface: Surface;
+  /**
+   * 「いま開いている作品」の画素寸法。作品ごとに違いうる(WorkRecord.canvasWidth/canvasHeight)ので
+   * 定数(CANVAS_WIDTH/CANVAS_HEIGHT)は初期値としてのみ使い、以降はこちらを正とする。
+   * Surface・下敷き層・紙テクスチャ層・全体図のすべてがこの値から画素数を決める。
+   */
+  private canvasWidth: number = CANVAS_WIDTH;
+  private canvasHeight: number = CANVAS_HEIGHT;
+  private surface: Surface;
   private readonly sound = new SoundPlayer();
   private readonly guide: GuideBubble;
   private readonly store = createWorkStore();
@@ -348,16 +355,16 @@ class App {
     // 実ピクセルも同じ大きさで作り CSS で紙と同じ大きさへ伸ばす(drawImage にそのまま渡せる)。
     this.underlayCanvas = document.createElement("canvas");
     this.underlayCanvas.className = "underlay-layer";
-    this.underlayCanvas.width = CANVAS_WIDTH;
-    this.underlayCanvas.height = CANVAS_HEIGHT;
+    this.underlayCanvas.width = this.canvasWidth;
+    this.underlayCanvas.height = this.canvasHeight;
     this.underlayCtx = this.underlayCanvas.getContext("2d");
-    // 紙の質感の層。写真の下敷きと同じく実ピクセルを CANVAS_WIDTH x CANVAS_HEIGHT で作り
+    // 紙の質感の層。写真の下敷きと同じく実ピクセルを canvasWidth x canvasHeight で作り
     // CSS で紙と同じ大きさへ伸ばす。mix-blend-mode: multiply で重ねる(画面フィルタの
     // 「よる」と同じ仕組み)。
     this.paperTextureCanvas = document.createElement("canvas");
     this.paperTextureCanvas.className = "paper-texture-layer";
-    this.paperTextureCanvas.width = CANVAS_WIDTH;
-    this.paperTextureCanvas.height = CANVAS_HEIGHT;
+    this.paperTextureCanvas.width = this.canvasWidth;
+    this.paperTextureCanvas.height = this.canvasHeight;
     this.paperTextureCtx = this.paperTextureCanvas.getContext("2d");
     this.paperWrap.append(canvas, this.gridLayer);
     this.stage.appendChild(this.paperWrap);
@@ -383,10 +390,8 @@ class App {
     this.minimap.className = "minimap";
     this.minimapCanvas = document.createElement("canvas");
     this.minimapCanvas.className = "minimap-canvas";
-    // 紙の比率(1748x1181)を保ったまま横 120px 程度。
-    this.minimapCanvas.width = 120;
-    this.minimapCanvas.height = Math.round((120 * CANVAS_HEIGHT) / CANVAS_WIDTH);
     this.minimapCtx = this.minimapCanvas.getContext("2d");
+    this.sizeMinimapCanvas();
     this.minimapViewportBox = document.createElement("div");
     this.minimapViewportBox.className = "minimap-viewport";
     this.minimap.append(this.minimapCanvas, this.minimapViewportBox);
@@ -420,7 +425,10 @@ class App {
     this.toolbarBar.appendChild(this.toolbar);
 
     root.append(this.stage, this.toolbarBar);
-    this.surface = new Surface(canvas);
+    this.surface = new Surface(canvas, this.canvasWidth, this.canvasHeight);
+    // 初期値(定数)と CSS 変数(既定 --paper-w/--paper-h)は既に一致しているはずだが、
+    // 将来の作品ごとの寸法切り替えに備えて、起動直後にも一度きちんと合わせておく。
+    this.applyCanvasSizeStyle();
     // 描いている最中の末尾を映す層(surface.ts の overlay)。方眼より下に敷く。
     this.paperWrap.insertBefore(this.surface.overlay, this.gridLayer);
     // 重なり順: 紙 → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → 方眼。方眼はマス目の
@@ -499,6 +507,68 @@ class App {
     void this.refreshHasUnderlays();
     // 作品が勝手に消えないよう永続化を頼んでおく(結果は待たない)。
     void requestPersistentStorage();
+  }
+
+  // --- 作品ごとの寸法 -----------------------------------------------------
+
+  /**
+   * 全体図(ミニマップ)の実ピクセル数を、いまの canvasWidth/canvasHeight の比率に合わせて決める。
+   *
+   * 元の実装は「横 120px 固定、縦は比率なり」だった。横長(1748x1181)前提ならそれで
+   * 破綻しないが、縦長の作品では縦がいくらでも伸びてしまう(例: 1000x2000 なら
+   * 120 x 240 になり、ツールバー等を圧迫する)。長辺を 120px に収める形にしておけば、
+   * どちらの向きでも全体図が同じ大きさ感になる。
+   */
+  private sizeMinimapCanvas(): void {
+    const portrait = this.canvasHeight > this.canvasWidth;
+    if (portrait) {
+      this.minimapCanvas.height = 120;
+      this.minimapCanvas.width = Math.round((120 * this.canvasWidth) / this.canvasHeight);
+    } else {
+      this.minimapCanvas.width = 120;
+      this.minimapCanvas.height = Math.round((120 * this.canvasHeight) / this.canvasWidth);
+    }
+  }
+
+  /** 紙の縦横比を CSS 側(aspect-ratio: var(--paper-w) / var(--paper-h))へ反映する。 */
+  private applyCanvasSizeStyle(): void {
+    document.documentElement.style.setProperty("--paper-w", String(this.canvasWidth));
+    document.documentElement.style.setProperty("--paper-h", String(this.canvasHeight));
+  }
+
+  /**
+   * 開く/新規作成した作品の寸法(WorkRecord.canvasWidth/canvasHeight)を、実際の描画まわり
+   * (Surface・下敷き層・紙テクスチャ層・全体図・CSS 変数)へ反映する。
+   *
+   * Surface は内部に undo 用の控え・仮インク層などを寸法固定で持って生成するため、
+   * 寸法そのものが変わる場合は作り直す以外に安全な手段が無い(単純に width/height を
+   * 書き換えると中身が消え、控えとも食い違う)。作り直すと overlay も新しい要素になるので、
+   * DOM 上の古い overlay を新しいものへ差し替える。
+   *
+   * サイズ選択 UI はまだ無く、既存作品は例外なく 1748x1181 なので、この関数の中で実際に
+   * 寸法が変わる分岐が走ることは今のところ無い(常に早期 return する)。将来 作品ごとに
+   * 寸法を選べるようにしたときのために、正しく書いておく。
+   */
+  private applyCanvasSize(width: number, height: number): void {
+    if (width === this.canvasWidth && height === this.canvasHeight) return;
+    this.canvasWidth = width;
+    this.canvasHeight = height;
+
+    this.paperWrap.removeChild(this.surface.overlay);
+    this.surface = new Surface(this.paperCanvas, width, height);
+    // 重なり順は組み立て時と同じ: 紙 → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → 方眼。
+    this.paperWrap.insertBefore(this.surface.overlay, this.paperTextureCanvas);
+
+    this.underlayCanvas.width = width;
+    this.underlayCanvas.height = height;
+    this.paperTextureCanvas.width = width;
+    this.paperTextureCanvas.height = height;
+    // 紙テクスチャは寸法込みで焼くので、寸法が変わったキャッシュは使い回せない。
+    // syncPaperLayer() 側が getPaperTexture() 経由で作り直す。
+    this.paperTextureCache.clear();
+
+    this.sizeMinimapCanvas();
+    this.applyCanvasSizeStyle();
   }
 
   // --- 組み立て ---------------------------------------------------------
@@ -626,7 +696,7 @@ class App {
   /** 種類ごとのテクスチャを 1 回だけ作って使い回す(1748x1181 の生成は軽くないため)。 */
   private getPaperTexture(kind: PaperKind): HTMLCanvasElement | OffscreenCanvas | null {
     if (!this.paperTextureCache.has(kind)) {
-      this.paperTextureCache.set(kind, createPaperTexture(kind, CANVAS_WIDTH, CANVAS_HEIGHT));
+      this.paperTextureCache.set(kind, createPaperTexture(kind, this.canvasWidth, this.canvasHeight));
     }
     return this.paperTextureCache.get(kind) ?? null;
   }
@@ -636,7 +706,7 @@ class App {
     const texture = this.getPaperTexture(this.paperKind);
     this.paperTextureCanvas.classList.toggle("is-on", texture !== null);
     if (this.paperTextureCtx !== null) {
-      this.paperTextureCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      this.paperTextureCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
       if (texture !== null) this.paperTextureCtx.drawImage(texture as CanvasImageSource, 0, 0);
     }
     for (const element of this.paperRow.querySelectorAll<HTMLElement>(".nib-button")) {
@@ -1350,7 +1420,7 @@ class App {
 
   /** マスに吸着するモードなら、その格子。自由に描けるモードでは null。 */
   private get cellGrid(): CellGrid | null {
-    return GRID_MODES[this.gridMode].cells;
+    return cellsFor(this.gridMode, this.canvasWidth, this.canvasHeight);
   }
 
   private get snapToCells(): boolean {
@@ -1436,7 +1506,7 @@ class App {
   /** underlayCanvas への実際の描画。placement はキャンバス座標系なのでそのまま渡せる。 */
   private drawUnderlay(): void {
     if (this.underlayCtx === null) return;
-    this.underlayCtx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+    this.underlayCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
     if (this.underlayRecord === null || this.underlayBitmap === null) return;
     const { placement, opacity, width, height } = this.underlayRecord;
     // 濃さは canvas に描き込まず CSS の opacity で載せる(差し替えのたびに再エンコードしなくて済む)。
@@ -1605,7 +1675,13 @@ class App {
   private moveUnderlayBy(dx: number, dy: number): void {
     if (this.underlayRecord === null) return;
     const { placement, width, height } = this.underlayRecord;
-    const moved = clampPlacement({ scale: placement.scale, tx: placement.tx + dx, ty: placement.ty + dy }, width, height);
+    const moved = clampPlacement(
+      { scale: placement.scale, tx: placement.tx + dx, ty: placement.ty + dy },
+      width,
+      height,
+      this.canvasWidth,
+      this.canvasHeight,
+    );
     this.underlayRecord = { ...this.underlayRecord, placement: moved };
     this.drawUnderlay();
   }
@@ -1619,14 +1695,16 @@ class App {
     if (this.underlayRecord === null) return;
     const { placement, width, height } = this.underlayRecord;
     const rect = this.paperCanvas.getBoundingClientRect();
-    const anchor = toCanvasPoint(change.centerX, change.centerY, rect, CANVAS_WIDTH, CANVAS_HEIGHT);
-    const ratioX = rect.width > 0 ? CANVAS_WIDTH / rect.width : 1;
-    const ratioY = rect.height > 0 ? CANVAS_HEIGHT / rect.height : 1;
+    const anchor = toCanvasPoint(change.centerX, change.centerY, rect, this.canvasWidth, this.canvasHeight);
+    const ratioX = rect.width > 0 ? this.canvasWidth / rect.width : 1;
+    const ratioY = rect.height > 0 ? this.canvasHeight / rect.height : 1;
     const scaled = scaleAt(placement, width, height, anchor.x, anchor.y, change.scaleFactor);
     const moved = clampPlacement(
       { scale: scaled.scale, tx: scaled.tx + change.dx * ratioX, ty: scaled.ty + change.dy * ratioY },
       width,
       height,
+      this.canvasWidth,
+      this.canvasHeight,
     );
     this.underlayRecord = { ...this.underlayRecord, placement: moved };
     this.drawUnderlay();
@@ -1678,7 +1756,7 @@ class App {
   private placeScreenToCanvas(localX: number, localY: number): { x: number; y: number } {
     const placeRect = this.placeCanvas.getBoundingClientRect();
     const paperRect = this.paperCanvas.getBoundingClientRect();
-    return toCanvasPoint(placeRect.left + localX, placeRect.top + localY, paperRect, CANVAS_WIDTH, CANVAS_HEIGHT);
+    return toCanvasPoint(placeRect.left + localX, placeRect.top + localY, paperRect, this.canvasWidth, this.canvasHeight);
   }
 
   /** placeCanvas の実ピクセル数を、いまの表示サイズちょうどに合わせる(画面座標=キャンバス値にするため)。 */
@@ -1705,8 +1783,8 @@ class App {
     // 紙の矩形を placeCanvas のローカル座標へ。
     const paperLeft = paperRect.left - placeRect.left;
     const paperTop = paperRect.top - placeRect.top;
-    const ratioX = CANVAS_WIDTH > 0 ? paperRect.width / CANVAS_WIDTH : 1;
-    const ratioY = CANVAS_HEIGHT > 0 ? paperRect.height / CANVAS_HEIGHT : 1;
+    const ratioX = this.canvasWidth > 0 ? paperRect.width / this.canvasWidth : 1;
+    const ratioY = this.canvasHeight > 0 ? paperRect.height / this.canvasHeight : 1;
     const imgLeft = paperLeft + placement.tx * ratioX;
     const imgTop = paperTop + placement.ty * ratioY;
     const imgWidth = width * placement.scale * ratioX;
@@ -2243,6 +2321,8 @@ class App {
       this.applyInitialView();
     }
     await this.captureSnapshot("revert");
+    // 履歴画像は work と同じ寸法で焼かれているので、work の寸法に揃えてから描き戻す。
+    this.applyCanvasSize(work.canvasWidth, work.canvasHeight);
     await this.surface.restoreFrom(image);
     await this.save();
     this.persistProgress();
@@ -2260,6 +2340,8 @@ class App {
     const work = await this.store.get(id);
     const image = work?.pages[0]?.image;
     if (work === null || work === undefined || image === undefined) return;
+    // 開く作品の寸法に合わせてから描き戻す(いまは全作品 1748x1181 なので実質は保険)。
+    this.applyCanvasSize(work.canvasWidth, work.canvasHeight);
     await this.surface.restoreFrom(image);
     this.work = work;
     this.applyWorkPaper();
@@ -2276,6 +2358,9 @@ class App {
 
   private async createWork(): Promise<void> {
     await this.save();
+    // サイズ選択 UI はまだ無いので常に既定寸法(CANVAS_WIDTH/CANVAS_HEIGHT)。
+    // 選べるようになったときはここに選んだ寸法を渡す。
+    this.applyCanvasSize(CANVAS_WIDTH, CANVAS_HEIGHT);
     this.surface.reset();
     // 空の作品をこの場で作って開いた状態にする。
     // 「あたらしく かく」を押した時点で一覧に 1 枚増えていないと、描く前に閉じた子の絵が迷子になる。
@@ -2301,10 +2386,13 @@ class App {
       const rest = await this.store.list();
       const next = rest[0];
       if (next === undefined) {
+        // サイズ選択 UI はまだ無いので常に既定寸法。
+        this.applyCanvasSize(CANVAS_WIDTH, CANVAS_HEIGHT);
         this.surface.reset();
         this.work = createWork(await this.surface.toPng(), Date.now(), await this.surface.toThumbnail());
         await this.store.put(this.work);
       } else {
+        this.applyCanvasSize(next.canvasWidth, next.canvasHeight);
         const image = next.pages[0]?.image;
         if (image !== undefined) await this.surface.restoreFrom(image);
         this.work = next;
@@ -2368,6 +2456,7 @@ class App {
       const latest = saved !== null && !saved.deleted ? saved : (await this.store.list())[0];
       const image = latest?.pages[0]?.image;
       if (latest === undefined || image === undefined) return;
+      this.applyCanvasSize(latest.canvasWidth, latest.canvasHeight);
       await this.surface.restoreFrom(image);
       this.work = latest;
       this.applyWorkPaper();

@@ -24,14 +24,17 @@ export const CANVAS_HEIGHT = 1181;
 
 /**
  * アイロンビーズ / ドット絵モードのマス数。
- * 1748x1181 を 58x39 で割ると 1 マス ≒ 30px でほぼ正方形になる。
+ * 「長辺方向 x 短辺方向」のマス数として持つ(キャンバスの向きに合わせて実際の
+ * cols/rows を入れ替えるのは cellGridFor() の仕事)。
+ * 1748x1181(横長)を 58x39 で割ると 1 マス ≒ 30px でほぼ正方形になる。
  * 実物のペグボードは 29x29 が基準なので、ちょうど 2x1.35 枚ぶんの図案が置ける。
  */
 export const BEAD_COLS = 58;
 export const BEAD_ROWS = 39;
 
 /**
- * ドット絵モードのマス数。ビーズのちょうど倍にしてある。
+ * ドット絵モードのマス数。ビーズのちょうど倍にしてある。「長辺方向 x 短辺方向」の
+ * マス数として持つ(意味は BEAD_COLS/BEAD_ROWS と同じ)。
  * 1748x1181 を 116x78 で割ると 1 マス ≒ 15px。ビーズと同じ「マスに置く」操作のまま、
  * 絵として成立する細かさになる下限がこのあたり。これ以上細かくすると、指で 1 マスを
  * 狙えなくなる(拡大が前提になってしまい、子どもの道具ではなくなる)。
@@ -59,18 +62,51 @@ export interface CellGrid {
   round: boolean;
 }
 
-function createCellGrid(cols: number, rows: number, round: boolean): CellGrid {
+/**
+ * 作品ごとの寸法(canvasWidth/canvasHeight)を受け取って格子を作る。
+ * cellWidth/cellHeight はその寸法から割り出すので、正方形に近いマスにしたければ
+ * 呼び出し側で cols/rows を寸法の向きに合わせて渡す必要がある(cellGridFor() 参照)。
+ */
+export function createCellGrid(
+  cols: number,
+  rows: number,
+  round: boolean,
+  canvasWidth: number,
+  canvasHeight: number,
+): CellGrid {
   return {
     cols,
     rows,
-    cellWidth: CANVAS_WIDTH / cols,
-    cellHeight: CANVAS_HEIGHT / rows,
+    cellWidth: canvasWidth / cols,
+    cellHeight: canvasHeight / rows,
     round,
   };
 }
 
-export const BEAD_GRID: CellGrid = createCellGrid(BEAD_COLS, BEAD_ROWS, true);
-export const DOT_GRID: CellGrid = createCellGrid(DOT_COLS, DOT_ROWS, false);
+/**
+ * ビーズ / ドット絵の格子を、作品の寸法に合わせて作る。
+ *
+ * BEAD_COLS/DOT_COLS 等は「長辺方向 x 短辺方向」のマス数として決めてあるので、
+ * 縦長(canvasWidth < canvasHeight)のときは cols/rows を入れ替える。
+ * これをしないと、縦長キャンバスでは横方向にだけマスが細かい(＝正方形でない)
+ * 格子になってしまう。
+ */
+export function cellGridFor(
+  kind: "beads" | "dot",
+  canvasWidth: number,
+  canvasHeight: number,
+): CellGrid {
+  const [longCols, shortRows, round] =
+    kind === "beads" ? ([BEAD_COLS, BEAD_ROWS, true] as const) : ([DOT_COLS, DOT_ROWS, false] as const);
+  const portrait = canvasWidth < canvasHeight;
+  const cols = portrait ? shortRows : longCols;
+  const rows = portrait ? longCols : shortRows;
+  return createCellGrid(cols, rows, round, canvasWidth, canvasHeight);
+}
+
+/** 既定寸法(CANVAS_WIDTH/CANVAS_HEIGHT)での格子。既存コード・テスト互換用。 */
+export const BEAD_GRID: CellGrid = createCellGrid(BEAD_COLS, BEAD_ROWS, true, CANVAS_WIDTH, CANVAS_HEIGHT);
+export const DOT_GRID: CellGrid = createCellGrid(DOT_COLS, DOT_ROWS, false, CANVAS_WIDTH, CANVAS_HEIGHT);
 
 /** スキーマ変更時に上げる。読み込み時に不一致なら復元しない(壊れたデータで起動しない)。 */
 export const SCHEMA_VERSION = 1;

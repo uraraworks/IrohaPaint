@@ -13,6 +13,13 @@
   --btn: 88px;
   /* 「ぽよん」の実体。跳ね返りのあるイージング。 */
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /*
+   * 紙の画素寸法(単位なしの数値)。aspect-ratio に渡す比率のもとになる。
+   * 既定は今のところ唯一の作品寸法(1748x1181)。作品を開くたびに main.ts が
+   * 実際の WorkRecord.canvasWidth/canvasHeight で上書きする(applyCanvasSizeStyle() 参照)。
+   */
+  --paper-w: 1748;
+  --paper-h: 1181;
 }
 
 * {
@@ -125,7 +132,7 @@ body {
   position: relative;
   max-width: 100%;
   max-height: 100%;
-  aspect-ratio: 1748 / 1181;
+  aspect-ratio: var(--paper-w) / var(--paper-h);
   /* viewport.ts の変換式は原点を左上に置く前提 */
   transform-origin: 0 0;
 }
@@ -196,7 +203,7 @@ body {
 }
 
 /*
- * 紙の質感の層。写真の下敷きと同じ実ピクセル(CANVAS_WIDTH x CANVAS_HEIGHT)で作り
+ * 紙の質感の層。写真の下敷きと同じ実ピクセル(作品ごとの canvasWidth x canvasHeight)で作り
  * CSS で紙と同じ大きさへ伸ばす。mix-blend-mode: multiply で重ねる(画面フィルタの
  * 「よる」と同じ仕組み)。方眼・写真とは違い「絵そのものの一部」という位置づけなので、
  * 下敷き(写真)より下・仮インクより上に置く(main.ts の insertBefore 参照)。
@@ -242,11 +249,17 @@ body {
   display: none;
   border-radius: 14px;
   pointer-events: none;
-  /* 1748x1181 を 16 マスで割ると 1 マス ≒ 109px。縦横で同じ大きさになる % を指定する。 */
+  /*
+   * 横 16 マス、縦は正方形になる大きさへ自動で揃える。
+   * 横方向は常に 100%/16 = 6.25%。縦方向は「横のマス幅(px) ÷ 紙の高さ(px)」の比を
+   * calc() で求める(--paper-w/--paper-h は main.ts が作品ごとに更新する、単位なしの画素数)。
+   * 1748x1181(既定寸法)だと 1748/16/1181 ≒ 9.25% になり、旧来の固定値と一致する。
+   * 縦長の作品でもマスが正方形のまま崩れない。
+   */
   background-image:
     repeating-linear-gradient(to right, rgba(74, 163, 223, 0.34) 0 1px, transparent 1px 100%),
     repeating-linear-gradient(to bottom, rgba(74, 163, 223, 0.34) 0 1px, transparent 1px 100%);
-  background-size: 6.25% 9.25%;
+  background-size: calc(100% / 16) calc(100% * var(--paper-w) / (var(--paper-h) * 16));
 }
 
 /* アイロンビーズのマス目。58x39 マス(1 マス ≒ 30px)。
@@ -1325,7 +1338,7 @@ ruby > rt {
   border: none;
   border-radius: 14px;
   background: var(--paper);
-  aspect-ratio: 1748 / 1181;
+  aspect-ratio: var(--paper-w) / var(--paper-h);
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.18s var(--spring);
