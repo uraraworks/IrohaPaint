@@ -2221,11 +2221,19 @@ class App {
     this.scheduleSave();
   }
 
-  /** 戻る/進むが効かない時は薄く見せる(押しても壊れないので無効化はしない)。 */
+  /** 戻る/進むが効かない時は、押せない状態にした上で薄く見せる。 */
   private syncHistoryButtons(): void {
-    // みんなで描くモードでは戻る/進むを持たない。押せないことが見て分かるようにする。
-    this.buttons.get("undo")?.classList.toggle("is-dim", this.multiDraw || !this.surface.canUndo);
-    this.buttons.get("redo")?.classList.toggle("is-dim", this.multiDraw || !this.surface.canRedo);
+    // みんなで描くモードでは戻る/進むを持たない。押せないことが見て・触って分かるようにする。
+    this.setHistoryButtonEnabled("undo", !this.multiDraw && this.surface.canUndo);
+    this.setHistoryButtonEnabled("redo", !this.multiDraw && this.surface.canRedo);
+  }
+
+  /** ボタン要素は素の <button> なので、disabled 属性そのものを使って押せなくする。 */
+  private setHistoryButtonEnabled(id: "undo" | "redo", enabled: boolean): void {
+    const button = this.buttons.get(id);
+    if (button === undefined) return;
+    button.classList.toggle("is-dim", !enabled);
+    if (button instanceof HTMLButtonElement) button.disabled = !enabled;
   }
 
   /** 選択中の色をツールバーのボタンに反映する。 */
