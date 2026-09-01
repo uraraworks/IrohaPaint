@@ -7,15 +7,16 @@
 //
 // 仕様書§7.5「消えない設計」に従い、「すてる」はゴミばこ行き(フラグを立てるだけ)。
 // ゴミばこは一覧から覗けて、いつでも「とりもどす」ができる。
-import type { WorkRecord, WorkSnapshot } from "../core/model.ts";
+import { CANVAS_SIZE_ORDER, CANVAS_SIZES, type CanvasSizeId, type WorkRecord, type WorkSnapshot } from "../core/model.ts";
 import type { LabelPart } from "../core/tools.ts";
 import { TOOL_DEFS } from "../core/tools.ts";
 import { plainText, renderRuby } from "./label.ts";
-import { CLOSE_SVG, HISTORY_SVG, NEW_PAGE_SVG, RESTORE_SVG, TRASH_SVG } from "./icons.ts";
+import { CLOSE_SVG, HISTORY_SVG, RESTORE_SVG, TRASH_SVG } from "./icons.ts";
 
 export interface GalleryHandlers {
   onOpen: (id: string) => void;
-  onCreate: () => void;
+  /** どちらの向きの紙で新しく描き始めるか(はがき よこ/たて)を渡す。 */
+  onCreate: (sizeId: CanvasSizeId) => void;
   onTrash: (id: string) => void;
   onRestore: (id: string) => void;
   /** その作品の履歴一覧をひらく。 */
@@ -56,7 +57,6 @@ const TEXT = {
   trash: [{ base: "ゴミ" }, { base: "箱", ruby: "ばこ" }],
   backToWorks: [{ base: "作品", ruby: "さくひん" }, { base: "に" }, { base: "戻", ruby: "もど" }, { base: "る" }],
   close: [{ base: "閉", ruby: "と" }, { base: "じる" }],
-  create: [{ base: "新", ruby: "あたら" }, { base: "しく" }, { base: "描", ruby: "か" }, { base: "く" }],
   // ツールバーの「描く」と字を揃える(同じ行為に別の字を当てない)。
   now: [{ base: "今", ruby: "いま" }, { base: "描", ruby: "か" }, { base: "いてる" }],
   trashIt: [{ base: "捨", ruby: "す" }, { base: "てる" }],
@@ -139,7 +139,7 @@ export class Gallery {
     );
     this.setTabButton();
 
-    if (this.tab === "works") this.grid.appendChild(this.createNewCard());
+    if (this.tab === "works") this.grid.appendChild(this.createNewRow());
 
     for (const work of works) {
       this.grid.appendChild(this.createCard(work, currentId, now));
@@ -284,10 +284,24 @@ export class Gallery {
     this.tabButton.setAttribute("aria-label", plainText(parts));
   }
 
-  private createNewCard(): HTMLElement {
-    const card = createLabeledButton("gallery-card gallery-new", NEW_PAGE_SVG, TEXT.create);
-    card.addEventListener("click", () => this.handlers.onCreate());
-    return card;
+  /**
+   * 「あたらしい」を「はがき よこ」「はがき たて」の2ボタンに分ける。
+   * 選択パネルを挟まず1タップで作れるようにする(ユーザー決定事項)。
+   * グリッドの1列にはめ込むと横幅で2枠使ってしまい狭い画面で縦積みになるため、
+   * grid-column を全幅に広げた行の中に2つ並べる(gallery-new-row、CSS側で対応)。
+   */
+  private createNewRow(): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "gallery-new-row";
+    for (const id of CANVAS_SIZE_ORDER) {
+      // マンガ原稿は縦横比の調整が別途必要なので、今回のボタンには出さない。
+      if (id === "manga-b4") continue;
+      const def = CANVAS_SIZES[id];
+      const card = createLabeledButton("gallery-card gallery-new", def.iconSvg, def.label);
+      card.addEventListener("click", () => this.handlers.onCreate(id));
+      row.appendChild(card);
+    }
+    return row;
   }
 
   private createCard(work: WorkRecord, currentId: string | null, now: number): HTMLElement {
@@ -297,6 +311,11 @@ export class Gallery {
 
     const open = document.createElement("button");
     open.className = "gallery-thumb";
+    // 一覧には横長・縦長の作品が混在しうる。カードの縦横比は作品ごとの実寸法
+    // (work.canvasWidth/canvasHeight)で決めないと、いま開いている紙の
+    // --paper-w/--paper-h(全カード共通)に引っ張られて他の作品のカードだけ歪む。
+    open.style.setProperty("--card-w", String(work.canvasWidth));
+    open.style.setProperty("--card-h", String(work.canvasHeight));
     const image = work.thumbnail ?? work.pages[0]?.image;
     if (image !== undefined) {
       const url = URL.createObjectURL(image);

@@ -314,6 +314,9 @@ export interface CanvasSizeDef {
   label: LabelPart[];
   width: number;
   height: number;
+  // 新規作成ボタンなどで使う、向きが一目で分かるアイコン。src/core/paper.ts の
+  // iconSvg と同じ作法(viewBox 0 0 32 32、その場に置くだけの小さな SVG 文字列)。
+  iconSvg: string;
 }
 
 export const CANVAS_SIZES: Readonly<Record<CanvasSizeId, CanvasSizeDef>> = {
@@ -323,6 +326,11 @@ export const CANVAS_SIZES: Readonly<Record<CanvasSizeId, CanvasSizeDef>> = {
     label: [{ base: "はがき", ruby: "はがき" }, { base: "横", ruby: "よこ" }],
     width: CANVAS_WIDTH,
     height: CANVAS_HEIGHT,
+    // 横長の紙。幅を高さより大きくして、見ただけで「よこ」と分かる形にする。
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="3" y="8" width="26" height="16" rx="2" fill="#fffdf7" stroke="#3d3730"
+        stroke-width="2.4"/>
+    </svg>`,
   },
   // はがき縦(100x148mm)を 300dpi で換算 = 1181x1748。横長のちょうど 90 度回転。
   "postcard-portrait": {
@@ -330,6 +338,11 @@ export const CANVAS_SIZES: Readonly<Record<CanvasSizeId, CanvasSizeDef>> = {
     label: [{ base: "はがき", ruby: "はがき" }, { base: "縦", ruby: "たて" }],
     width: CANVAS_HEIGHT,
     height: CANVAS_WIDTH,
+    // 縦長の紙。高さを幅より大きくして、見ただけで「たて」と分かる形にする。
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="8" y="3" width="16" height="26" rx="2" fill="#fffdf7" stroke="#3d3730"
+        stroke-width="2.4"/>
+    </svg>`,
   },
   // マンガ原稿用紙 B4(257x364mm)相当の比率。
   // 実寸(257x364mm)をそのまま 300dpi 換算すると 3035x4299 になり、
@@ -343,6 +356,12 @@ export const CANVAS_SIZES: Readonly<Record<CanvasSizeId, CanvasSizeDef>> = {
     label: [{ base: "マンガ原稿", ruby: "まんがげんこう" }],
     width: 1748,
     height: 2476,
+    // まだ導線がどこからも無いので、縦長アイコンを仮に流用しておく
+    // (実際にボタンを出すときは比率調整とあわせて描き直す想定)。
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="9" y="3" width="14" height="26" rx="2" fill="#fffdf7" stroke="#3d3730"
+        stroke-width="2.4"/>
+    </svg>`,
   },
 };
 

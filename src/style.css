@@ -1506,12 +1506,25 @@ ruby > rt {
   transform: scale(0.92);
 }
 
-/* 「あたらしく かく」は白紙そのものに見せる(何が起きるか絵で分かる)。 */
+/*
+ * 「あたらしい」は「はがき よこ」「はがき たて」の2ボタン。グリッドの1コマに
+ * はめると横幅で2枠使って狭い画面では縦積みになってしまうため、grid-column を
+ * 全幅に広げた行(gallery-new-row)の中に横並びで置く。作品カードの並びより
+ * 手前(グリッドの先頭)に出て、一覧を開いたら必ず最初に見える位置にする。
+ */
+.gallery-new-row {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 14px;
+}
+
+/* 「あたらしい」は白紙そのものに見せる(何が起きるか絵で分かる)。 */
 .gallery-new {
+  flex: 1 1 0;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  min-height: 200px;
+  gap: 8px;
+  min-height: 140px;
   font-size: 17px;
   font-weight: 700;
   color: var(--ink);
@@ -1525,15 +1538,16 @@ ruby > rt {
   transform: scale(0.94);
 }
 
-/* 「新しく描く」カードのアイコンだけは大きく見せる(白紙そのものに見せたい)。 */
+/* 「あたらしい」カードのアイコンだけは大きく見せる(白紙そのものに見せたい)。
+   2つ並ぶぶん、1個だった頃(72px)より少し小さくして狭い画面でも窮屈にしない。 */
 .gallery-new .btn-icon {
-  width: 72px;
-  height: 72px;
+  width: 56px;
+  height: 56px;
 }
 
 .gallery-new .btn-icon svg {
-  width: 72px;
-  height: 72px;
+  width: 56px;
+  height: 56px;
 }
 
 .gallery-empty {

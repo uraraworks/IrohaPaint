@@ -14,9 +14,11 @@ import { createPaperTexture, PAPER_KINDS, PAPER_KIND_ORDER, type PaperKind } fro
 import {
   appendSnapshot,
   CANVAS_HEIGHT,
+  CANVAS_SIZES,
   CANVAS_WIDTH,
   createWork,
   snapshotOf,
+  type CanvasSizeId,
   type CellGrid,
   type SnapshotReason,
   type WorkRecord,
@@ -561,9 +563,8 @@ class App {
    * 書き換えると中身が消え、控えとも食い違う)。作り直すと overlay も新しい要素になるので、
    * DOM 上の古い overlay を新しいものへ差し替える。
    *
-   * サイズ選択 UI はまだ無く、既存作品は例外なく 1748x1181 なので、この関数の中で実際に
-   * 寸法が変わる分岐が走ることは今のところ無い(常に早期 return する)。将来 作品ごとに
-   * 寸法を選べるようにしたときのために、正しく書いておく。
+   * ギャラリーの「はがき よこ/たて」ボタンや、寸法違いの作品をひらく操作から呼ばれる。
+   * 同じ寸法の作品を続けて開いた場合は早期 return し、Surface の作り直しを避ける。
    */
   private applyCanvasSize(width: number, height: number): void {
     if (width === this.canvasWidth && height === this.canvasHeight) return;
@@ -1083,7 +1084,7 @@ class App {
   private buildGallery(): void {
     this.gallery = new Gallery(document.body, {
       onOpen: (id) => void this.openWork(id),
-      onCreate: () => void this.createWork(),
+      onCreate: (sizeId) => void this.createWork(sizeId),
       onTrash: (id) => void this.trashWork(id),
       onRestore: (id) => void this.restoreWork(id),
       onHistory: (id) => void this.showHistory(id),
@@ -2381,15 +2382,21 @@ class App {
     this.gallery.close();
   }
 
-  private async createWork(): Promise<void> {
+  /** ギャラリーの「はがき よこ/たて」ボタンから、選んだ向きの寸法で新しい作品を作る。 */
+  private async createWork(sizeId: CanvasSizeId = "postcard-landscape"): Promise<void> {
     await this.save();
-    // サイズ選択 UI はまだ無いので常に既定寸法(CANVAS_WIDTH/CANVAS_HEIGHT)。
-    // 選べるようになったときはここに選んだ寸法を渡す。
-    this.applyCanvasSize(CANVAS_WIDTH, CANVAS_HEIGHT);
+    const size = CANVAS_SIZES[sizeId];
+    this.applyCanvasSize(size.width, size.height);
     this.surface.reset();
     // 空の作品をこの場で作って開いた状態にする。
     // 「あたらしく かく」を押した時点で一覧に 1 枚増えていないと、描く前に閉じた子の絵が迷子になる。
-    this.work = createWork(await this.surface.toPng(), Date.now(), await this.surface.toThumbnail());
+    this.work = createWork(
+      await this.surface.toPng(),
+      Date.now(),
+      await this.surface.toThumbnail(),
+      size.width,
+      size.height,
+    );
     this.applyWorkPaper();
     // 新しく描き始めた作品もスマホ/タブレットに合わせた最初の見え方から始める。
     this.applyInitialView();
@@ -2411,7 +2418,7 @@ class App {
       const rest = await this.store.list();
       const next = rest[0];
       if (next === undefined) {
-        // サイズ選択 UI はまだ無いので常に既定寸法。
+        // ここは「捨てたら1枚も残らなかった」ときの穴埋めなので、向きを選ばせず既定寸法(横)にする。
         this.applyCanvasSize(CANVAS_WIDTH, CANVAS_HEIGHT);
         this.surface.reset();
         this.work = createWork(await this.surface.toPng(), Date.now(), await this.surface.toThumbnail());
