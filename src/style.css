@@ -20,6 +20,15 @@
    */
   --paper-w: 1748;
   --paper-h: 1181;
+  /*
+   * ビーズ／ドット絵の下敷き格子のマス数(長辺方向 x 短辺方向ではなく、実際の cols/rows)。
+   * 既定は横長(1748x1181)での値。main.ts の applyCanvasSizeStyle() が cellsFor() の
+   * 結果(縦長では cols/rows が入れ替わる)で作品ごとに上書きする。
+   */
+  --bead-cols: 58;
+  --bead-rows: 39;
+  --dot-cols: 116;
+  --dot-rows: 78;
 }
 
 * {
@@ -263,22 +272,27 @@ body {
 }
 
 /* アイロンビーズのマス目。58x39 マス(1 マス ≒ 30px)。
-   実物のペグボード(29x29)がちょうど 2 枚ぶん入る大きさ。 */
+   実物のペグボード(29x29)がちょうど 2 枚ぶん入る大きさ。
+   --bead-cols/--bead-rows は main.ts が作品ごとに設定する実際の cols/rows(縦長では
+   入れ替わる)。紙(.paper-wrap)の aspect-ratio が既に --paper-w/--paper-h で正しい
+   向きになっているので、ここは単純に「100% ÷ マス数」の百分率だけで正方形になる
+   (方眼(.grid-layer 本体)のように paper-w/paper-h を calc() へ持ち込む必要が無い)。 */
 .grid-layer.is-beads {
   background-image:
     repeating-linear-gradient(to right, rgba(61, 55, 48, 0.22) 0 1px, transparent 1px 100%),
     repeating-linear-gradient(to bottom, rgba(61, 55, 48, 0.22) 0 1px, transparent 1px 100%);
-  background-size: 1.7241% 2.5641%;
+  background-size: calc(100% / var(--bead-cols)) calc(100% / var(--bead-rows));
 }
 
 /* ドット絵モードのマス目。116x78 マス(ビーズのちょうど倍・1 マス ≒ 15px)。
    線はビーズよりはっきり薄くする: マスが倍細かいぶん、同じ濃さだと線の面積が勝って
-   画面全体が青灰色に濁り、置いた色が見えなくなるため。 */
+   画面全体が青灰色に濁り、置いた色が見えなくなるため。
+   --dot-cols/--dot-rows も同じ理由(is-beads のコメント参照)で百分率のみでよい。 */
 .grid-layer.is-dot {
   background-image:
     repeating-linear-gradient(to right, rgba(61, 55, 48, 0.12) 0 1px, transparent 1px 100%),
     repeating-linear-gradient(to bottom, rgba(61, 55, 48, 0.12) 0 1px, transparent 1px 100%);
-  background-size: 0.8621% 1.2821%;
+  background-size: calc(100% / var(--dot-cols)) calc(100% / var(--dot-rows));
 }
 
 .grid-layer.is-on {
@@ -1338,7 +1352,14 @@ ruby > rt {
   border: none;
   border-radius: 14px;
   background: var(--paper);
-  aspect-ratio: var(--paper-w) / var(--paper-h);
+  /*
+   * 縦横比はカードごとの作品寸法(--card-w/--card-h)を優先する。一覧には横長・縦長の
+   * 作品が混在しうるため、いま開いている紙の --paper-w/--paper-h(全カード共通)を
+   * そのまま使うと他の作品のカードだけ縦横比がずれてしまう。--card-w/--card-h は
+   * gallery.ts が WorkRecord.canvasWidth/canvasHeight からカード要素へ設定する
+   * (履歴カードなど、寸法が分からない場面向けに --paper-w/--paper-h をフォールバックに残す)。
+   */
+  aspect-ratio: var(--card-w, var(--paper-w)) / var(--card-h, var(--paper-h));
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.18s var(--spring);

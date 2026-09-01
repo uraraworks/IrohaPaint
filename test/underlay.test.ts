@@ -164,6 +164,16 @@ describe("createUnderlay", () => {
     const underlay = createUnderlay(dummy, 1000, 800, 1234, dummyThumb);
     expect(underlay.lastUsedAt).toBe(1234);
   });
+
+  it("縦長キャンバスへ取り込むと、その寸法基準の fitPlacement になる(既定の横長基準にならない)", () => {
+    // 残件3: canvasWidth/canvasHeight を渡さないと縦長作品でも既定(横長)の
+    // fitPlacement が使われ、初期配置が紙からはみ出てしまっていた。
+    const portraitWidth = 1181;
+    const portraitHeight = 1748;
+    const underlay = createUnderlay(dummy, 1000, 800, 1234, dummyThumb, portraitWidth, portraitHeight);
+    expect(underlay.placement).toEqual(fitPlacement(1000, 800, portraitWidth, portraitHeight));
+    expect(underlay.placement).not.toEqual(fitPlacement(1000, 800));
+  });
 });
 
 describe("pickEvicted", () => {

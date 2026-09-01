@@ -172,6 +172,8 @@ export function createUnderlay(
   height: number,
   now: number,
   thumbnail: Blob,
+  canvasWidth: number = CANVAS_WIDTH,
+  canvasHeight: number = CANVAS_HEIGHT,
 ): UnderlayRecord {
   return {
     id: createId("under"),
@@ -179,7 +181,10 @@ export function createUnderlay(
     image,
     width,
     height,
-    placement: fitPlacement(width, height),
+    // 作品の寸法(canvasWidth/canvasHeight)に合わせて contain 配置する。既定は横長 1748x1181
+    // だが、縦長の作品でここを既定のままにすると、初期配置が紙からはみ出た/収まりきらない
+    // ままになってしまう。
+    placement: fitPlacement(width, height, canvasWidth, canvasHeight),
     opacity: DEFAULT_UNDERLAY_OPACITY,
     // 取り込んだ直後は「今使った」ので lastUsedAt も now にする。
     lastUsedAt: now,

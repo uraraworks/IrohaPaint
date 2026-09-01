@@ -530,10 +530,26 @@ class App {
     }
   }
 
-  /** 紙の縦横比を CSS 側(aspect-ratio: var(--paper-w) / var(--paper-h))へ反映する。 */
+  /**
+   * 紙の縦横比を CSS 側(aspect-ratio: var(--paper-w) / var(--paper-h))へ反映する。
+   * ビーズ／ドット絵の下敷き格子も、マス数(cols/rows)を CSS 変数として渡す。
+   * cellsFor() は縦長で cols/rows を入れ替えて返すので、ここで流し込めば
+   * CSS 側は「1 マス = 100%/cols x 100%/rows」の百分率だけで済み、紙の
+   * aspect-ratio が既に正しい向きになっているぶん、そのまま正方形のマスになる。
+   */
   private applyCanvasSizeStyle(): void {
     document.documentElement.style.setProperty("--paper-w", String(this.canvasWidth));
     document.documentElement.style.setProperty("--paper-h", String(this.canvasHeight));
+    const beadGrid = cellsFor("beads", this.canvasWidth, this.canvasHeight);
+    const dotGrid = cellsFor("dot", this.canvasWidth, this.canvasHeight);
+    if (beadGrid !== null) {
+      document.documentElement.style.setProperty("--bead-cols", String(beadGrid.cols));
+      document.documentElement.style.setProperty("--bead-rows", String(beadGrid.rows));
+    }
+    if (dotGrid !== null) {
+      document.documentElement.style.setProperty("--dot-cols", String(dotGrid.cols));
+      document.documentElement.style.setProperty("--dot-rows", String(dotGrid.rows));
+    }
   }
 
   /**
@@ -1468,7 +1484,7 @@ class App {
     if (this.importingUnderlay) return;
     this.importingUnderlay = true;
     try {
-      const record = await importUnderlay(file, Date.now());
+      const record = await importUnderlay(file, Date.now(), this.canvasWidth, this.canvasHeight);
       await this.underlayStore.put(record);
       // 取り込みに成功した時点で、下敷きは最低1枚は必ずある。
       this.hasUnderlays = true;
@@ -1698,7 +1714,16 @@ class App {
     const anchor = toCanvasPoint(change.centerX, change.centerY, rect, this.canvasWidth, this.canvasHeight);
     const ratioX = rect.width > 0 ? this.canvasWidth / rect.width : 1;
     const ratioY = rect.height > 0 ? this.canvasHeight / rect.height : 1;
-    const scaled = scaleAt(placement, width, height, anchor.x, anchor.y, change.scaleFactor);
+    const scaled = scaleAt(
+      placement,
+      width,
+      height,
+      anchor.x,
+      anchor.y,
+      change.scaleFactor,
+      this.canvasWidth,
+      this.canvasHeight,
+    );
     const moved = clampPlacement(
       { scale: scaled.scale, tx: scaled.tx + change.dx * ratioX, ty: scaled.ty + change.dy * ratioY },
       width,

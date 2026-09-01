@@ -4,6 +4,7 @@
 // vitest がブラウザ API(createImageBitmap / canvas)を持たない node 環境で動くため、
 // 判断ロジック(検査・符号化の選択)とブラウザ API を叩く処理を明確に分ける。
 // 前者だけがテスト対象。
+import { CANVAS_HEIGHT, CANVAS_WIDTH } from "./model.ts";
 import { createUnderlay, fitSize, type UnderlayRecord } from "./underlay.ts";
 
 /** 取り込めるファイルサイズの上限。これを超えるとデコードでタブが固まりうる。 */
@@ -64,8 +65,17 @@ export function validateFile(file: { type: string; size: number }): void {
 /**
  * ファイルを下敷き 1 枚に取り込む。
  * ここから先はブラウザ API に触るためテストしない(vitest は node 環境で DOM が無い)。
+ *
+ * canvasWidth/canvasHeight は取り込み先の作品の寸法。既定(横長 1748x1181)のまま
+ * だと、縦長の作品に取り込んだときの初期配置(contain)が実際の紙と合わなくなるため、
+ * 呼び出し側(main.ts)がいま開いている作品の寸法を渡す。
  */
-export async function importUnderlay(file: File, now: number): Promise<UnderlayRecord> {
+export async function importUnderlay(
+  file: File,
+  now: number,
+  canvasWidth: number = CANVAS_WIDTH,
+  canvasHeight: number = CANVAS_HEIGHT,
+): Promise<UnderlayRecord> {
   validateFile(file);
 
   let bitmap: ImageBitmap;
@@ -87,7 +97,7 @@ export async function importUnderlay(file: File, now: number): Promise<UnderlayR
       type: "image/jpeg",
       quality: 0.7,
     });
-    return createUnderlay(blob, size.width, size.height, now, thumbnail);
+    return createUnderlay(blob, size.width, size.height, now, thumbnail, canvasWidth, canvasHeight);
   } finally {
     // デコード済み画像は数十 MB を占めるので放置しない。
     bitmap.close();

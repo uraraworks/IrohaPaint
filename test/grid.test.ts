@@ -30,4 +30,25 @@ describe("下敷きの種類", () => {
     expect(snapsToCells("grid")).toBe(false);
     expect(snapsToCells("off")).toBe(false);
   });
+
+  it("縦長キャンバスでは cols/rows が入れ替わり、1 マスは正方形のまま", () => {
+    // 横長(1748x1181)を 90 度回した縦長寸法(1181x1748)。UI はまだ無いが
+    // 寸法だけ縦長にして cellsFor() を確かめる(残件1のリファクタ対象)。
+    const portraitWidth = CANVAS_HEIGHT;
+    const portraitHeight = CANVAS_WIDTH;
+    const landscapeBeads = cellsFor("beads", CANVAS_WIDTH, CANVAS_HEIGHT);
+    const portraitBeads = cellsFor("beads", portraitWidth, portraitHeight);
+    // 横長では cols(長辺方向)=58, rows(短辺方向)=39 だったのが、縦長では入れ替わる。
+    expect(portraitBeads?.cols).toBe(landscapeBeads?.rows);
+    expect(portraitBeads?.rows).toBe(landscapeBeads?.cols);
+    // 入れ替えないと縦横比の違うマスになってしまう。1 マスの縦横がほぼ一致すること
+    // (この作品寸法では厳密な整数割り切れではないので近似で見る)。
+    expect(portraitBeads?.cellWidth).toBeCloseTo(portraitBeads?.cellHeight ?? 0, 0);
+
+    const landscapeDot = cellsFor("dot", CANVAS_WIDTH, CANVAS_HEIGHT);
+    const portraitDot = cellsFor("dot", portraitWidth, portraitHeight);
+    expect(portraitDot?.cols).toBe(landscapeDot?.rows);
+    expect(portraitDot?.rows).toBe(landscapeDot?.cols);
+    expect(portraitDot?.cellWidth).toBeCloseTo(portraitDot?.cellHeight ?? 0, 0);
+  });
 });
