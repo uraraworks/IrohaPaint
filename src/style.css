@@ -142,9 +142,17 @@ body {
  * 敷くことになるが、負の z-index は「親の背景より上・親の通常フローの中身より下」
  * に描かれるので、紙の色が .paper 自身の不透明な背景のままだと下のレイヤーが
  * 隠れて見えなくなる。紙の色は入れ物(.paper-wrap)の持ち物にしておく必要がある。
- * overflow: hidden も角丸からはみ出す層(下のレイヤー含む)を切るためここに置く。 */
+ * overflow: hidden も角丸からはみ出す層(下のレイヤー含む)を切るためここに置く。
+ *
+ * z-index: 0 は position: relative とセットで必須。position だけでは
+ * 「重ね合わせ文脈(stacking context)」ができず、負の z-index を持つ子
+ * (アクティブより下のレイヤー)がこの要素の背景より後ろへ回り込んで見えなくなる
+ * (position:relative だけの要素は auto 扱いで、子の負の z-index はもっと外側の
+ * 文脈で解決されてしまう)。z-index: 0 でこの要素自身に文脈を作れば、
+ * 「この背景 → 負の z-index の子 → 通常フロー(.paper 以降)」の順で描かれる。 */
 .paper-wrap {
   position: relative;
+  z-index: 0;
   max-width: 100%;
   max-height: 100%;
   aspect-ratio: var(--paper-w) / var(--paper-h);

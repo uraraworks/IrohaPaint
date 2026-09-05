@@ -572,7 +572,9 @@ class App {
     this.canvasWidth = width;
     this.canvasHeight = height;
 
-    this.paperWrap.removeChild(this.surface.overlay);
+    // overlay だけ外しても、レイヤーの控え canvas(display:none で見えないが 1 枚 8MB)が
+    // .paper-wrap に残り続けて作り直すたびに積み上がるので、Surface 側にまとめて外させる。
+    this.surface.detach();
     this.surface = new Surface(this.paperCanvas, width, height);
     // 重なり順は組み立て時と同じ: 紙 → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → 方眼。
     this.paperWrap.insertBefore(this.surface.overlay, this.paperTextureCanvas);
@@ -1459,7 +1461,9 @@ class App {
     this.gridLayer.classList.toggle("is-dot", this.gridMode === "dot");
     // ドット絵のときだけ拡大の補間を切る。ここを滑らかに伸ばすと、せっかく四角で
     // 置いたマスの角がぼやけて、ドット絵にした意味が無くなる。
-    this.paperCanvas.classList.toggle("is-pixelated", this.gridMode === "dot");
+    // アクティブな 1 枚(paperCanvas)だけでなく全レイヤーに掛けないと、他のレイヤーだけ
+    // 補間が残って見た目が揃わないので Surface 側にまとめて掛けさせる。
+    this.surface.setPixelated(this.gridMode === "dot");
     // 写真の下敷きは、下敷きが実際にあるときだけ見せる。
     this.underlayCanvas.classList.toggle("is-on", this.gridMode === "photo" && this.underlayRecord !== null);
     // ツールバーのボタンには、いま選んでいる下敷きの絵を出す。

@@ -1,12 +1,18 @@
 // 描画面。Canvas 2D を 1 枚だけ持つ(Phase 0 はレイヤー無し)。
 // 「もどる」はパッチ方式(undoStack.ts 参照)。
-import { CANVAS_HEIGHT, CANVAS_WIDTH, type CellGrid } from "./model.ts";
+import { CANVAS_HEIGHT, CANVAS_WIDTH, createId, type CellGrid } from "./model.ts";
 import { floodFill, type Rgba } from "./floodFill.ts";
 import { cellsBounds, shapeBox, shapeCells, type ShapeMode } from "./fillShape.ts";
 import { DirtyRect, MAX_STEPS, trimPatches, type FillRect, type UndoPatch } from "./undoStack.ts";
 import { NIB_DEFS, shiftColor, strokeWidth, type NibDynamics } from "./brush.ts";
 
 export const PAPER_COLOR = "#fffdf7";
+
+/**
+ * これ以上増やすと自分でも分からなくなるので、UI 側で「もう十分だよ」と一声かける目安。
+ * 強制はしない(上限で弾くと「なぜ増えないのか」が子どもには分からない)。
+ */
+export const SOFT_LAYER_LIMIT = 8;
 
 export interface StrokeStyle {
   color: string;
@@ -100,6 +106,27 @@ interface PendingPoint {
   distance: number;
 }
 
+/**
+ * レイヤー 1 枚ぶんの置き場。
+ *
+ * JS で毎フレーム合成するのではなく、レイヤーごとに canvas 要素を DOM に重ねて
+ * ブラウザに合成させる(描画のホットパスを一切触らずに済むのが理由)。
+ * `this.canvas`(= .paper)は常に「いま選んでいるレイヤー」の描画先そのものなので、
+ * アクティブなスロットの canvas/ctx は切り替えるまで出番が無い(中身も古いまま)。
+ */
+interface LayerSlot {
+  id: string;
+  /** そのレイヤーの画素の置き場。アクティブな 1 枚のぶんは this.canvas 側にあり、
+      こちらは切り替えるまで古いままになる(display:none で画面にも出さない)。 */
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  visible: boolean;
+  opacity: number;
+  /** そのレイヤーの「もどる」履歴。アクティブな 1 枚のぶんは this.patches 側にある。 */
+  patches: UndoPatch[];
+  redoPatches: UndoPatch[];
+}
+
 export class Surface {
   readonly canvas: HTMLCanvasElement;
   private readonly ctx: CanvasRenderingContext2D;
@@ -133,6 +160,14 @@ export class Surface {
    */
   private shapePreviewDirty: FillRect | null = null;
 
+  /**
+   * レイヤーの一覧。index 0 が一番下。
+   * アクティブなスロット(= activeIndex)の画素は this.canvas 側にあり、
+   * スロット自身の canvas は切り替えるまで古いまま(display:none)。
+   */
+  private layers: LayerSlot[] = [];
+  private activeIndex = 0;
+
   /** この Surface が扱うキャンバスの画素寸法。作品ごとに違いうるので固定定数にしない。 */
   readonly width: number;
   readonly height: number;
@@ -163,6 +198,40 @@ export class Surface {
     this.overlayCtx = overlayCtx;
     this.clearToPaper();
     this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
+
+    // レイヤーは 1 枚から始める。控え canvas は .paper の兄弟として .paper-wrap に
+    // 挿しておく(切り替えるまで中身は使わないので display:none)。
+    // 親がまだ無い(canvas がまだ DOM に挿さっていない)呼び出し元もありうるので、
+    // その場合は挿さずに保持だけする。
+    const first = this.createLayerSlot();
+    first.canvas.style.display = "none";
+    const parent = this.canvas.parentElement;
+    if (parent !== null) parent.appendChild(first.canvas);
+    this.layers = [first];
+    this.activeIndex = 0;
+  }
+
+  /** 空のレイヤースロットを 1 つ作る(canvas 生成込み)。DOM への挿入は呼び出し側の仕事。 */
+  private createLayerSlot(): LayerSlot {
+    const canvas = document.createElement("canvas");
+    canvas.width = this.width;
+    canvas.height = this.height;
+    canvas.className = "paper-layer";
+    // いま dot モード中に増やしたレイヤーは、最初からドット絵の見た目に揃える。
+    // ここで合わせておかないと、restack() で表に出た瞬間だけ補間がかかって角が
+    // ぼやけ、他のレイヤーと見た目が食い違う。
+    if (this.canvas.classList.contains("is-pixelated")) canvas.classList.add("is-pixelated");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
+    return {
+      id: createId("layer"),
+      canvas,
+      ctx,
+      visible: true,
+      opacity: 1,
+      patches: [],
+      redoPatches: [],
+    };
   }
 
   get canUndo(): boolean {
@@ -746,6 +815,239 @@ export class Surface {
     return true;
   }
 
+  /**
+   * DOM に挿した自前の要素(仮インク・レイヤーの控え)を全部外す。Surface を作り直すときに呼ぶ。
+   *
+   * overlay だけ外しても足りない: レイヤーの控え canvas(this.layers の各 canvas)は
+   * this.canvas とは別に .paper-wrap へ直接挿さっており(restack() 参照)、overlay を
+   * 外しただけでは残り続ける。display:none で見た目には出ないが 1 枚 8MB もあるので、
+   * 寸法を変えるたびに古い Surface の分がぶら下がったままメモリに積み上がってしまう。
+   */
+  detach(): void {
+    this.overlay.remove();
+    for (const layer of this.layers) layer.canvas.remove();
+  }
+
+  /**
+   * ドット絵モードの最近傍補間。アクティブな 1 枚だけでなく全レイヤーに掛ける
+   * (掛け忘れたレイヤーだけ角がぼやけて見た目が揃わなくなる)。
+   */
+  setPixelated(on: boolean): void {
+    this.canvas.classList.toggle("is-pixelated", on);
+    for (const layer of this.layers) layer.canvas.classList.toggle("is-pixelated", on);
+  }
+
+  // --- レイヤー -----------------------------------------------------------
+  //
+  // JS で毎フレーム合成しない代わりに、レイヤーごとの canvas を DOM に重ねて
+  // ブラウザに合成させる(下ごしらえは style.css の .paper-wrap/.paper-layer 参照)。
+  // アクティブな 1 枚だけは常に this.canvas(= .paper)で描く。描画・undo 本体は
+  // 一切変えず、切り替えの瞬間だけ this.canvas の中身をスロットへ出し入れする。
+
+  /** 下から順の一覧(表示用のコピー)。呼び出し側が中身を書き換えても実体には影響しない。 */
+  get layerList(): { id: string; visible: boolean; opacity: number; active: boolean }[] {
+    return this.layers.map((layer, index) => ({
+      id: layer.id,
+      visible: layer.visible,
+      opacity: layer.opacity,
+      active: index === this.activeIndex,
+    }));
+  }
+
+  get activeLayerId(): string {
+    return (this.layers[this.activeIndex] as LayerSlot).id;
+  }
+
+  get layerCount(): number {
+    return this.layers.length;
+  }
+
+  /**
+   * いま選んでいるレイヤーを切り替える。
+   * this.canvas は常にアクティブな 1 枚の描画先なので、ここで中身を丸ごと
+   * 出し入れする(合成はしない。DOM の重なりで見せるだけ)。
+   */
+  setActiveLayer(id: string): boolean {
+    if (id === this.layers[this.activeIndex]?.id) return true;
+    const index = this.layers.findIndex((layer) => layer.id === id);
+    if (index === -1) return false;
+
+    // 描きかけの線を挟んだまま切り替えると、控えに半端な線が混ざってしまう。
+    this.cancelStroke();
+
+    // いまの this.canvas の中身を現アクティブの控えへ丸ごと写す。undo 履歴も一緒に預ける。
+    const current = this.layers[this.activeIndex] as LayerSlot;
+    current.ctx.clearRect(0, 0, this.width, this.height);
+    current.ctx.drawImage(this.canvas, 0, 0);
+    current.patches = this.patches;
+    current.redoPatches = this.redoPatches;
+
+    this.activeIndex = index;
+    const next = this.layers[index] as LayerSlot;
+    // clearToPaper() ではなく透明へ戻す。上に乗るレイヤーは紙の色を持たないのが正しい。
+    this.ctx.clearRect(0, 0, this.width, this.height);
+    this.ctx.drawImage(next.canvas, 0, 0);
+    this.patches = next.patches;
+    this.redoPatches = next.redoPatches;
+
+    this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
+    this.restack();
+    return true;
+  }
+
+  /** アクティブの 1 つ上に透明な 1 枚を足し、そこをアクティブにする。新しい id を返す。 */
+  addLayer(): string {
+    this.cancelStroke();
+    const slot = this.createLayerSlot();
+    this.layers.splice(this.activeIndex + 1, 0, slot);
+    // 新しいスロットは空(透明)なので、通常の切り替え経路に乗せるだけで良い。
+    this.setActiveLayer(slot.id);
+    return slot.id;
+  }
+
+  /** 最後の 1 枚は消せない(false を返す)。消したら隣をアクティブにする。 */
+  removeLayer(id: string): boolean {
+    if (this.layers.length <= 1) return false;
+    const index = this.layers.findIndex((layer) => layer.id === id);
+    if (index === -1) return false;
+
+    this.cancelStroke();
+    const wasActive = index === this.activeIndex;
+    const [removed] = this.layers.splice(index, 1);
+    removed?.canvas.remove();
+
+    if (wasActive) {
+      // 消したのがアクティブ本人。次の位置(無ければ繰り上がった末尾)へ直接読み込む。
+      // 消す絵なので現アクティブ(this.canvas)の中身は控えへ退避せず捨ててよい。
+      const nextIndex = Math.min(index, this.layers.length - 1);
+      this.activeIndex = nextIndex;
+      const next = this.layers[nextIndex] as LayerSlot;
+      this.ctx.clearRect(0, 0, this.width, this.height);
+      this.ctx.drawImage(next.canvas, 0, 0);
+      this.patches = next.patches;
+      this.redoPatches = next.redoPatches;
+      this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
+    } else if (index < this.activeIndex) {
+      // アクティブより前を消したので、詰まった分だけ番号がずれる。
+      this.activeIndex -= 1;
+    }
+    this.restack();
+    return true;
+  }
+
+  setLayerVisible(id: string, visible: boolean): void {
+    const layer = this.layers.find((candidate) => candidate.id === id);
+    if (layer === undefined) return;
+    layer.visible = visible;
+    this.restack();
+  }
+
+  setLayerOpacity(id: string, opacity: number): void {
+    const layer = this.layers.find((candidate) => candidate.id === id);
+    if (layer === undefined) return;
+    layer.opacity = opacity;
+    this.restack();
+  }
+
+  /** 並べ替え。toIndex は 0 が一番下。 */
+  moveLayer(id: string, toIndex: number): boolean {
+    const index = this.layers.findIndex((layer) => layer.id === id);
+    if (index === -1) return false;
+    const clamped = Math.max(0, Math.min(this.layers.length - 1, toIndex));
+    if (clamped === index) return true;
+
+    const activeId = (this.layers[this.activeIndex] as LayerSlot).id;
+    const [slot] = this.layers.splice(index, 1);
+    if (slot === undefined) return false;
+    this.layers.splice(clamped, 0, slot);
+    // 並べ替えで配列の並びが変わるので、activeIndex は id から引き直す。
+    this.activeIndex = this.layers.findIndex((layer) => layer.id === activeId);
+    this.restack();
+    return true;
+  }
+
+  /**
+   * DOM の重なり順を組み直す。
+   *
+   * .paper-wrap の中の並びは元々:
+   *   canvas.paper → .paper-overlay → .paper-texture-layer → .underlay-layer → .grid-layer
+   * 後ろの 4 つは position:absolute かつ z-index なしで、DOM 順だけで重なっている。
+   * これを崩さずレイヤーを差し込むため:
+   *   - アクティブより下: position:absolute(.paper-layer が持つ) + 負の z-index
+   *     (すぐ下が -1、その下が -2 …)。DOM 上のどこにあってもこの数字で沈む。
+   *   - アクティブより上: z-index は auto のまま、.paper の直後・overlay の直前に
+   *     下から順に挿す。auto 同士は DOM 順で重なるので、.paper より上・overlay より下に収まる。
+   */
+  private restack(): void {
+    const parent = this.canvas.parentElement;
+    let belowZ = -1;
+    for (let i = 0; i < this.layers.length; i += 1) {
+      const layer = this.layers[i] as LayerSlot;
+      if (i === this.activeIndex) {
+        // アクティブの画素は this.canvas 側にあるので、控えを出すと二重に見える。
+        layer.canvas.style.display = "none";
+        continue;
+      }
+      layer.canvas.style.display = "";
+      layer.canvas.style.visibility = layer.visible ? "" : "hidden";
+      layer.canvas.style.opacity = String(layer.opacity);
+      if (parent === null) continue;
+      if (i < this.activeIndex) {
+        layer.canvas.style.zIndex = String(belowZ);
+        belowZ -= 1;
+        parent.appendChild(layer.canvas);
+      } else {
+        layer.canvas.style.zIndex = "";
+        // overlay がまだ(または既に) parent の子でないタイミングで呼ばれることがあり、
+        // その状態で insertBefore(…, this.overlay) すると DOM 例外で落ちる。
+        // 基準にできないときは末尾へ足すだけにする(次の restack で並びは直る)。
+        if (this.overlay.parentElement === parent) {
+          parent.insertBefore(layer.canvas, this.overlay);
+        } else {
+          parent.appendChild(layer.canvas);
+        }
+      }
+    }
+  }
+
+  /**
+   * 全レイヤーを下から順に 1 枚へ焼いて合成する。紙の色は塗らない(呼び出し側が従来通り塗る)。
+   * アクティブなレイヤーだけは控え canvas ではなく this.canvas(= 画素の実体)を使う。
+   *
+   * pick() / pickCell() / fill() は色鉛筆・スポイト・ぬりつぶしが this.canvas(=アクティブな
+   * 1 枚)だけを見て判定する処理で、本来は合成後の見た目を見るべきだが、複数レイヤーを
+   * 跨いだ塗りつぶし/スポイトは挙動の設計がまだ無いため今回は触らない(別の段で対応する)。
+   */
+  private composite(): HTMLCanvasElement {
+    const flat = document.createElement("canvas");
+    flat.width = this.width;
+    flat.height = this.height;
+    const ctx = flat.getContext("2d");
+    if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
+    for (let i = 0; i < this.layers.length; i += 1) {
+      const layer = this.layers[i] as LayerSlot;
+      if (!layer.visible) continue;
+      ctx.globalAlpha = layer.opacity;
+      ctx.drawImage(i === this.activeIndex ? this.canvas : layer.canvas, 0, 0);
+    }
+    return flat;
+  }
+
+  /** レイヤーを 1 枚に畳む(reset() / restoreFrom() の下ごしらえ)。余分な控え canvas は DOM からも外す。 */
+  private collapseToSingleLayer(): void {
+    for (let i = 1; i < this.layers.length; i += 1) {
+      (this.layers[i] as LayerSlot).canvas.remove();
+    }
+    const first = this.layers[0] as LayerSlot;
+    first.patches = [];
+    first.redoPatches = [];
+    first.visible = true;
+    first.opacity = 1;
+    first.canvas.style.display = "none";
+    this.layers = [first];
+    this.activeIndex = 0;
+  }
+
   // --- 道具 -------------------------------------------------------------
 
   /** 「ぬりつぶし」。塗った矩形を返す(何も塗らなければ null)。 */
@@ -867,7 +1169,7 @@ export class Surface {
     if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
     ctx.fillStyle = PAPER_COLOR;
     ctx.fillRect(0, 0, this.width, this.height);
-    ctx.drawImage(this.canvas, 0, 0);
+    ctx.drawImage(this.composite(), 0, 0);
     return await new Promise<Blob>((resolve, reject) => {
       flat.toBlob((blob) => {
         if (blob === null) reject(new Error("PNG の生成に失敗しました"));
@@ -895,7 +1197,7 @@ export class Surface {
     if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
     ctx.fillStyle = PAPER_COLOR;
     ctx.fillRect(0, 0, this.width, this.height);
-    ctx.drawImage(this.canvas, 0, 0);
+    ctx.drawImage(this.composite(), 0, 0);
     if (texture !== null) {
       ctx.globalCompositeOperation = "multiply";
       ctx.drawImage(texture as CanvasImageSource, 0, 0);
@@ -921,7 +1223,7 @@ export class Surface {
     if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
     ctx.fillStyle = PAPER_COLOR;
     ctx.fillRect(0, 0, small.width, small.height);
-    ctx.drawImage(this.canvas, 0, 0, small.width, small.height);
+    ctx.drawImage(this.composite(), 0, 0, small.width, small.height);
     return await new Promise<Blob>((resolve, reject) => {
       small.toBlob((blob) => {
         if (blob === null) reject(new Error("PNG の生成に失敗しました"));
@@ -930,9 +1232,10 @@ export class Surface {
     });
   }
 
-  /** まっさらな紙に戻す(あたらしく描く)。履歴も捨てる。 */
+  /** まっさらな紙に戻す(あたらしく描く)。履歴も捨てる。レイヤーも 1 枚に畳む。 */
   reset(): void {
     this.clearOverlay();
+    this.collapseToSingleLayer();
     this.clearToPaper();
     this.patches = [];
     this.redoPatches = [];
@@ -940,8 +1243,9 @@ export class Surface {
     this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
   }
 
-  /** 保存済み PNG を描き戻す(リロード復元)。 */
+  /** 保存済み PNG を描き戻す(リロード復元)。レイヤーも 1 枚に畳む。 */
   async restoreFrom(image: Blob): Promise<void> {
+    this.collapseToSingleLayer();
     const bitmap = await createImageBitmap(image);
     try {
       this.clearToPaper();
