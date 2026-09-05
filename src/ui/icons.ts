@@ -83,6 +83,34 @@ export const CHEVRON_RIGHT_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fi
   <path d="M12 6l10 10-10 10"/>
 </svg>`;
 
+/** かさねの帯の「うえへ/したへ」。左右の送り矢印(CHEVRON_LEFT/RIGHT)と同じ規格で向きだけ変える。 */
+export const CHEVRON_UP_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
+  stroke="#3d3730" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 20l10-10 10 10"/>
+</svg>`;
+
+export const CHEVRON_DOWN_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
+  stroke="#3d3730" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 12l10 10 10-10"/>
+</svg>`;
+
+/**
+ * かさねの「みせる/かくす」。開いた目 = 見えている、閉じた目(まつ毛だけの弧) = 隠れている。
+ * 「かくす」ボタン(withHiddenBadge)と違い、こちらは目そのものの絵で状態を表す
+ * (下敷きの絵に✕を重ねる手は、かさねの中身は絵そのものなので使えないため)。
+ */
+export const EYE_OPEN_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
+  stroke="#3d3730" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 16c3.5-6.5 9-9.5 12-9.5s8.5 3 12 9.5c-3.5 6.5-9 9.5-12 9.5s-8.5-3-12-9.5z" fill="#eaf4fc"/>
+  <circle cx="16" cy="16" r="4" fill="#4aa3df" stroke="#3d3730" stroke-width="2"/>
+</svg>`;
+
+export const EYE_CLOSED_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none"
+  stroke="#3d3730" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 18c3.5-5 9-7.5 12-7.5s8.5 2.5 12 7.5"/>
+  <path d="M4 16l3.2 2M28 16l-3.2 2M11 21.5l1.3-3M21 21.5l-1.3-3"/>
+</svg>`;
+
 /** うごかす(下敷きを「置く」状態に入る)。上下左右へ動かせることを十字の矢印で表す。 */
 export const MOVE_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="#3d3730"
   stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">

@@ -12,6 +12,7 @@ export type ToolId =
   | "undo"
   | "redo"
   | "grid"
+  | "layers"
   | "together"
   | "works"
   | "done"
@@ -115,6 +116,21 @@ export const TOOL_DEFS: Readonly<Record<ToolId, ToolDef>> = {
         opacity="0.55"/>
     </svg>`,
     description: "したじきの マスを えらべるよ(方眼・ビーズ)",
+  },
+  // 「レイヤー」も「重ね合わせ」も画面には出さない。前者はカタカナで絵が浮かばず、
+  // 後者は語呂が長くてボタンに収まらないため。画面の言葉は必ず「かさね」に統一する
+  // (コード側の識別子は layer のままでよい)。パネルを開く「マス」とは違い、これは
+  // 押すたびに帯を出し入れするだけのトグル(src/ui/layerStrip.ts 参照)。
+  layers: {
+    id: "layers",
+    label: [{ base: "かさね" }],
+    icon: "🗂️",
+    // 紙を2枚、少しずらして重ねた絵。マス目(四角い方眼)の絵と並んでも紛れない。
+    iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="10" y="6" width="17" height="17" rx="3" fill="#f3c64b" stroke="#3d3730" stroke-width="2"/>
+      <rect x="5" y="10" width="17" height="17" rx="3" fill="#fffdf7" stroke="#3d3730" stroke-width="2"/>
+    </svg>`,
+    description: "かさねを ふやしたり きりかえたり できるよ",
   },
   // みんなで描くモード。触れた指がぜんぶ線になる代わりに、拡大と戻るは止まる。
   together: {
@@ -223,6 +239,7 @@ const STARTER_TOOLS: readonly ToolId[] = [
   "undo",
   "redo",
   "grid",
+  "layers",
   "together",
   "works",
   "done",

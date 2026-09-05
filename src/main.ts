@@ -28,7 +28,7 @@ import { createWorkStore, requestPersistentStorage } from "./core/workStore.ts";
 import { clampPlacement, scaleAt, UNDERLAY_ALPHA, MAX_UNDERLAYS, type UnderlayOpacity, type UnderlayRecord } from "./core/underlay.ts";
 import { importUnderlay, UnderlayImportError, type UnderlayImportErrorCode } from "./core/underlayImport.ts";
 import { createUnderlayStore, pruneUnderlays, type UnderlayStore } from "./core/underlayStore.ts";
-import { hexToRgba, Surface } from "./core/surface.ts";
+import { hexToRgba, SOFT_LAYER_LIMIT, Surface } from "./core/surface.ts";
 import { installPointerInput, toCanvasPoint, type GestureChange, type PointerInputControl } from "./core/pointerInput.ts";
 import {
   clampView,
@@ -63,6 +63,7 @@ import { GuideBubble } from "./ui/guide.ts";
 import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
 import { Gallery } from "./ui/gallery.ts";
+import { LayerStrip, type LayerStripItem } from "./ui/layerStrip.ts";
 import { installHScroll, makeHScrollPanelRow, type HScrollControl } from "./ui/hscroll.ts";
 import {
   CHEVRON_LEFT_SVG,
@@ -311,6 +312,12 @@ class App {
   private gridPanel!: Panel;
   private fillPanel!: Panel;
   private gallery!: Gallery;
+  /**
+   * かさね(レイヤー)の帯。「かさね」ボタンで出し入れするトグル(パネルとは違う経路)。
+   * 表示のON/OFFはここで持ち、中身(一覧・札の絵)は syncLayerStrip() が Surface から作る。
+   */
+  private layerStrip!: LayerStrip;
+  private layerStripVisible = false;
 
   /**
    * 塗り方。既定は「かこみ」(色の境界まで)。
@@ -451,6 +458,7 @@ class App {
     this.buildToolbarScroll();
     this.buildPanels();
     this.buildGallery();
+    this.buildLayerStrip();
     this.renderToolbar();
     this.buildSoundToggle();
     this.buildFullscreenToggle();
@@ -641,6 +649,21 @@ class App {
     };
     window.addEventListener("resize", repositionOpenPanels);
     window.addEventListener("orientationchange", repositionOpenPanels);
+  }
+
+  /**
+   * かさねの帯。「マス」のようにパネルを開く経路には乗せず、押すたびに帯を出し入れする
+   * トグルにする(仕様: かさねモード)。実際に Surface を触る処理はハンドラ側(このクラス)に
+   * 閉じ込め、LayerStrip 自身は Surface を知らない形にしてある。
+   */
+  private buildLayerStrip(): void {
+    this.layerStrip = new LayerStrip(this.stage, {
+      onSelect: (id) => this.selectLayerTile(id),
+      onToggleVisible: (id) => this.toggleLayerVisibleTile(id),
+      onMove: (id, direction) => this.moveLayerTile(id, direction),
+      onAdd: () => this.addLayerTile(),
+      onRemove: (id) => this.removeLayerTile(id),
+    });
   }
 
   private createSwatches(colors: readonly string[], className: string): HTMLElement {
@@ -1378,6 +1401,11 @@ class App {
         if (this.gridPanel.isOpen) this.onGridPanelOpened();
         this.sound.play("poko");
         break;
+      case "layers":
+        // 「マス」と違いパネルを開くのではなく、押すたびに帯を出し入れするだけのトグル。
+        this.setLayerStripVisible(!this.layerStripVisible);
+        this.sound.play(this.layerStripVisible ? "fanfare" : "poko");
+        break;
       case "works":
         void this.openGallery();
         break;
@@ -1414,6 +1442,18 @@ class App {
   private syncMultiDraw(): void {
     this.buttons.get("together")?.classList.toggle("is-active", this.multiDraw);
     this.root.classList.toggle("is-multi-draw", this.multiDraw);
+  }
+
+  /**
+   * かさねの帯の出し入れ。状態は保存しない(「かくす」と同じ考え方で、次に開いたときは
+   * 必ず閉じた状態から始める。開けっぱなしのまま別の作品を開く事故を作らないため)。
+   */
+  private setLayerStripVisible(visible: boolean): void {
+    this.layerStripVisible = visible;
+    this.layerStrip.setVisible(visible);
+    this.buttons.get("layers")?.classList.toggle("is-active", visible);
+    // 閉じている間の変化(描く・undo等)を取りこぼさないよう、開いた瞬間に必ず最新へ揃える。
+    if (visible) this.syncLayerStrip();
   }
 
   /**
@@ -2231,6 +2271,121 @@ class App {
     // みんなで描くモードでは戻る/進むを持たない。押せないことが見て・触って分かるようにする。
     this.setHistoryButtonEnabled("undo", !this.multiDraw && this.surface.canUndo);
     this.setHistoryButtonEnabled("redo", !this.multiDraw && this.surface.canRedo);
+    // かさねの帯もここで揃える。「描き終わり・undo・redo・作品を開く/戻す」等、
+    // 履歴が動くタイミングがすべてこの syncHistoryButtons() を通る(main.ts 内を grep 済み)ので、
+    // 同じ入口に乗せておけば取りこぼしが無い。常時再描画はしない(描き心地に響くため)。
+    this.syncLayerStrip();
+  }
+
+  /**
+   * かさねの帯を今の Surface の状態へ合わせる。中身の並び替え(LayerStrip.sync)に加えて、
+   * 札ごとの小さい絵も一緒に描き直す(Surface.drawLayerThumbnail はここでしか呼ばない)。
+   */
+  private syncLayerStrip(): void {
+    const items: LayerStripItem[] = this.surface.layerList;
+    this.layerStrip.sync(items, (id, canvas) => {
+      const { width, height } = this.layerThumbnailSize();
+      // 寸法が変わった時だけ張り替える(canvas は width/height を書き換えると中身が消えるため、
+      // 変わっていないのに毎回書き換えるとちらつきの原因になる)。
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      this.surface.drawLayerThumbnail(id, canvas);
+    });
+  }
+
+  /**
+   * 札の絵の実ピクセル寸法。.layer-tile-select の中身(82x82、CSS 側の寸法と揃えてある)
+   * と同じ正方形にする。作品ごとに紙の縦横比が違う(縦長/横長)ため、比率を保った
+   * レターボックス描画は Surface.drawLayerThumbnail() 側の役目にし、ここでは
+   * 「実ピクセルと CSS 表示サイズを一致させる」ことだけ担当する(そこがずれていると
+   * 縦横比を保って描いても最後にブラウザが引き伸ばしてしまう)。
+   */
+  private layerThumbnailSize(): { width: number; height: number } {
+    // CSS 表示サイズは 82px のまま変えない(.layer-tile-select の中身と同じ82x82、
+    // 上のコメント参照)。実ピクセルだけを devicePixelRatio 倍にして、高精細な画面
+    // (Retina 等)でも線がぼやけず・粗く出ないようにする。上限を3倍に頭打ちにするのは、
+    // devicePixelRatio が4以上ある端末で毎回数百px四方のcanvasへ縮小するのは
+    // 帯を開くたびのコストに見合わないため(3倍=246pxで十分にくっきり見える)。
+    const cssSize = 82;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    const size = Math.round(cssSize * dpr);
+    return { width: size, height: size };
+  }
+
+  /** 札を押して、そのかさねへ切り替える。 */
+  private selectLayerTile(id: string): void {
+    if (!this.surface.setActiveLayer(id)) return;
+    this.afterHistoryChange();
+    this.sound.play("poko");
+  }
+
+  /**
+   * 目のアイコン。見せる/隠すを切り替える。
+   * E: 表示を切ったときの安全策 ―― いま選んでいるかさねを隠したら、隣の見えているかさね
+   * (下優先・無ければ上)へ自動で切り替える(描いても何も出ない状態を子どもが自力で
+   * 抜けられなくなるため)。ただし見えているかさねが他に1枚も無いときは、隠すこと自体を
+   * 行わない(全部消えて白紙になり、何が起きたか分からなくなるため)。
+   */
+  private toggleLayerVisibleTile(id: string): void {
+    const items = this.surface.layerList;
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) return;
+    const target = items[index] as LayerStripItem;
+    const hiding = target.visible;
+
+    if (hiding) {
+      const othersVisible = items.some((item) => item.id !== id && item.visible);
+      if (!othersVisible) return;
+    }
+
+    this.surface.setLayerVisible(id, !hiding);
+
+    if (hiding && target.active) {
+      // 下(いま隠したかさねより手前=index が小さい側)を優先、無ければ上を探す。
+      const below = [...items.slice(0, index)].reverse().find((item) => item.visible);
+      const above = items.slice(index + 1).find((item) => item.visible);
+      const next = below ?? above;
+      if (next !== undefined) this.surface.setActiveLayer(next.id);
+    }
+
+    this.afterHistoryChange();
+    this.sound.play(hiding ? "shu" : "poko");
+  }
+
+  /** 上下の矢印。moveLayer の toIndex は 0 が一番下なので、「うえ」は index+1、「した」は index-1。 */
+  private moveLayerTile(id: string, direction: "up" | "down"): void {
+    const items = this.surface.layerList;
+    const index = items.findIndex((item) => item.id === id);
+    if (index === -1) return;
+    const toIndex = direction === "up" ? index + 1 : index - 1;
+    if (!this.surface.moveLayer(id, toIndex)) return;
+    this.afterHistoryChange();
+    this.sound.play("poko");
+  }
+
+  /**
+   * 「＋ふやす」。SOFT_LAYER_LIMIT 以上のときは実際には増やさず、軽く知らせるだけにする。
+   * 上限で弾いて何も起きないと、なぜ増えないのか子どもには分からないため
+   * (Surface 自体にハードな上限は無い。ここは UI 側の判断)。
+   */
+  private addLayerTile(): void {
+    if (this.surface.layerCount >= SOFT_LAYER_LIMIT) {
+      const anchor = this.buttons.get("layers") ?? this.layerStrip.element;
+      this.guide.show("もう じゅうぶん あるよ", anchor);
+      return;
+    }
+    this.surface.addLayer();
+    this.afterHistoryChange();
+    this.sound.play("poko");
+  }
+
+  /** 「けす」。最後の1枚は Surface.removeLayer 自体が false を返す(ボタン側も既に無効化済み)。 */
+  private removeLayerTile(id: string): void {
+    if (!this.surface.removeLayer(id)) return;
+    this.afterHistoryChange();
+    this.sound.play("shu");
   }
 
   /** ボタン要素は素の <button> なので、disabled 属性そのものを使って押せなくする。 */

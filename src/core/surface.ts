@@ -167,6 +167,12 @@ export class Surface {
    */
   private layers: LayerSlot[] = [];
   private activeIndex = 0;
+  /**
+   * drawLayerThumbnail() の段階縮小で使い回す作業用キャンバス2枚(ピンポンで交互に使う)。
+   * 呼ぶたびに新規生成すると帯を開くたびにレイヤー枚数分アロケーションが走るため、
+   * 使い回して確保コストを消す。
+   */
+  private thumbnailScratch: [HTMLCanvasElement, HTMLCanvasElement] | null = null;
 
   /** この Surface が扱うキャンバスの画素寸法。作品ごとに違いうるので固定定数にしない。 */
   readonly width: number;
@@ -967,6 +973,72 @@ export class Surface {
   }
 
   /**
+   * そのかさね 1 枚だけを小さく描き写す(帯の札用)。
+   * かさねは透過なので、紙の色を敷いてから描かないと札が真っ白で何も見えない
+   * (toThumbnail() が合成結果の前に紙色を敷いているのと同じ理由)。
+   * アクティブなかさねの画素は控え canvas ではなく this.canvas 側にある約束なので、
+   * そこだけ実体を見る(composite() のコメントと同じ注意)。
+   *
+   * 紙は作品ごとに縦長にも横長にもなる(CANVAS_SIZES 参照)。target は正方形の的
+   * (呼び出し側が width===height にして渡す約束)として扱い、紙の縦横比を保ったまま
+   * 中央に描く。CSS の object-fit:contain を canvas に頼る手もあるが、実ピクセルと
+   * CSS 表示サイズが食い違ったまま(元は 82x55 の実ピクセルを 82x82 の CSS 枠へ
+   * 押し込んでいた)だと環境によっては引き伸ばして描かれてしまう実害があったため、
+   * ここで実ピクセルの時点からレターボックス(余白は紙色のまま)にしておく。
+   * 見つからなければ false。
+   */
+  drawLayerThumbnail(id: string, target: HTMLCanvasElement): boolean {
+    const index = this.layers.findIndex((layer) => layer.id === id);
+    if (index === -1) return false;
+    const layer = this.layers[index] as LayerSlot;
+    const ctx = target.getContext("2d");
+    if (ctx === null) return false;
+    ctx.fillStyle = PAPER_COLOR;
+    ctx.fillRect(0, 0, target.width, target.height);
+    const scale = Math.min(target.width / this.width, target.height / this.height);
+    const drawWidth = this.width * scale;
+    const drawHeight = this.height * scale;
+    const dx = (target.width - drawWidth) / 2;
+    const dy = (target.height - drawHeight) / 2;
+    const source = index === this.activeIndex ? this.canvas : layer.canvas;
+
+    // 実測値: 1748x1181 の原寸を 82x82 の的へ drawImage 一発(約1/21)で縮めると、
+    // 1px 程度の細い線が縮小フィルタで周囲の紙色に溶けて消える。同じ線を的の
+    // 大きさだけ変えて描いた最小輝度(紙色は253相当・小さいほど濃い)は
+    //   的300px … 61 / 99 / 61 (どれも見える)
+    //   的82px  … 107 / 252 / 107 (真ん中が紙とほぼ同じ = 消える)
+    // で、一度に大きく縮めるほど線が消えることが分かっている。ブラウザの縮小
+    // フィルタは「毎回2分の1程度まで」なら間引きに追従できるので、的の大きさに
+    // 一気に落とさず半分ずつ縮小して近づける(縮小の定石)。
+    let src: CanvasImageSource = source;
+    let srcW = this.width;
+    let srcH = this.height;
+    if (srcW > drawWidth * 2 && srcH > drawHeight * 2) {
+      if (this.thumbnailScratch === null) {
+        this.thumbnailScratch = [document.createElement("canvas"), document.createElement("canvas")];
+      }
+      const [bufA, bufB] = this.thumbnailScratch;
+      let bufIndex = 0;
+      while (srcW > drawWidth * 2 && srcH > drawHeight * 2) {
+        const nextW = Math.max(Math.round(srcW / 2), Math.ceil(drawWidth));
+        const nextH = Math.max(Math.round(srcH / 2), Math.ceil(drawHeight));
+        const buf = bufIndex === 0 ? bufA : bufB;
+        buf.width = nextW;
+        buf.height = nextH;
+        const bufCtx = buf.getContext("2d");
+        if (bufCtx === null) break;
+        bufCtx.drawImage(src, 0, 0, srcW, srcH, 0, 0, nextW, nextH);
+        src = buf;
+        srcW = nextW;
+        srcH = nextH;
+        bufIndex = bufIndex === 0 ? 1 : 0;
+      }
+    }
+    ctx.drawImage(src, 0, 0, srcW, srcH, dx, dy, drawWidth, drawHeight);
+    return true;
+  }
+
+  /**
    * DOM の重なり順を組み直す。
    *
    * .paper-wrap の中の並びは元々:
@@ -980,7 +1052,6 @@ export class Surface {
    */
   private restack(): void {
     const parent = this.canvas.parentElement;
-    let belowZ = -1;
     for (let i = 0; i < this.layers.length; i += 1) {
       const layer = this.layers[i] as LayerSlot;
       if (i === this.activeIndex) {
@@ -999,8 +1070,13 @@ export class Surface {
       layer.canvas.style.opacity = String(layer.opacity);
       if (parent === null) continue;
       if (i < this.activeIndex) {
-        layer.canvas.style.zIndex = String(belowZ);
-        belowZ -= 1;
+        // ループは i 昇順(下から上へ)回るが、z-index は「アクティブから見て
+        // 何枚下か」で決まる。順に -1 ずつ振っていくと一番下(i=0)に -1(最も手前)が
+        // 付いてしまい、上に行くほど奥へ沈む逆順になる(かつ index0 は clearToPaper() で
+        // 塗った不透明な1枚なので、それが最前面に出ると間のレイヤーを全部隠す)。
+        // 「アクティブとの距離」= i - activeIndex を使えば、すぐ下が -1、
+        // 一番下が -activeIndex になり、下にあるものほど正しく奥へ回る。
+        layer.canvas.style.zIndex = String(i - this.activeIndex);
         parent.appendChild(layer.canvas);
       } else {
         layer.canvas.style.zIndex = "";

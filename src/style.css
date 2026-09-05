@@ -479,6 +479,221 @@ body {
   box-sizing: border-box;
 }
 
+/*
+ * かさねの帯。.stage の左端に縦置き(右上は音/全画面/かくす/フィルタ/ぜんぶ見るで
+ * 埋まっているため)。「かさね」ボタンで出し入れするトグルなので、既定は非表示。
+ * ミニマップ(左上)と同じ左端を使うが、ミニマップは拡大・移動中だけの一時表示、
+ * こちらは子どもが明示的に開いた状態なので、両方出た場合の重なりはいまは許容する。
+ */
+.layer-strip {
+  display: none;
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  bottom: 12px;
+  z-index: 8;
+}
+
+.layer-strip.is-visible {
+  display: flex;
+}
+
+.layer-strip-track {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 札と札の間(このgap)は、札の中(.layer-tile の gap)よりはっきり広くする。
+     目のマーク・上下矢印・けすは「すぐ下の札のもの」に見えやすいので、
+     隙間の広さの差だけで「この束はどの札の持ち物か」が分かるようにしておく。 */
+  gap: 18px;
+  width: 100%;
+  padding: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  touch-action: pan-y;
+  /*
+   * 8 枚も並ぶと .stage に収まる高さ(.layer-strip 参照)へ収まりきらず、下の札が
+   * 隠れる。送りボタンは付けず(理由は下記)、パネルの行(hscroll.ts)と同じ作法で
+   * 隠れている側の端をぼかして「まだ先がある」を見せる。--fade-in/--fade-out は
+   * installOverflowFade(layerStrip.ts)がスクロール位置に応じて切り替える
+   * is-overflow-top/bottom 側だけ値を持たせる。
+   * 送りボタンを付けない理由: 8 枚では送りボタンが縦にずらずら並び、他の操作ボタン
+   * (目・矢印・けす)と紛れて余計に「どの札のものか」が分かりにくくなる
+   * (hscroll.ts のパネル行のコメントと同じ判断)。
+   */
+  --fade-in: 0px;
+  --fade-out: 0px;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black var(--fade-in),
+    black calc(100% - var(--fade-out)),
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black var(--fade-in),
+    black calc(100% - var(--fade-out)),
+    transparent 100%
+  );
+}
+
+.layer-strip-track::-webkit-scrollbar {
+  display: none;
+}
+
+/* 上に隠れている札があるときだけ上端をぼかす。 */
+.layer-strip-track.is-overflow-top {
+  --fade-in: 22px;
+}
+
+/* 下に隠れている札があるときだけ下端をぼかす。両方隠れていれば両方ぼける。 */
+.layer-strip-track.is-overflow-bottom {
+  --fade-out: 22px;
+}
+
+/* 「＋ふやす」。ヒット領域・見た目は下敷きの .underlay-add と揃える(88px角・角丸・薄い地色)。 */
+.layer-strip-add {
+  flex: none;
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  border: 3px solid transparent;
+  border-radius: 16px;
+  background: #f7f3ec;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.18s var(--spring);
+}
+
+.layer-strip-add:active {
+  transform: scale(0.9);
+}
+
+.layer-strip-add .icon svg {
+  width: 34px;
+  height: 34px;
+}
+
+.layer-tile {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* 札本体と操作ボタン束の間は、.layer-strip-track の札同士の gap(18px)より
+     はっきり狭くする(3.の直し。理由は .layer-strip-track のコメント参照)。 */
+  gap: 4px;
+}
+
+/* 札の絵そのもの。大きさ・角丸は .underlay-thumb(88px角)と揃える(設計の芯)。 */
+.layer-tile-select {
+  flex: none;
+  width: 88px;
+  height: 88px;
+  padding: 0;
+  border: 3px solid transparent;
+  border-radius: 16px;
+  background: #f7f3ec;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.layer-tile-select:active {
+  transform: scale(0.9);
+}
+
+/* いま選んでいるかさねには他のボタンと同じ選択状態の見せ方(縁を効かせる)。 */
+.layer-tile.is-active .layer-tile-select {
+  border-color: var(--accent);
+}
+
+/* 札の canvas は実ピクセルから正方形(.layer-tile-select の中身と同じ82x82)にしてあり、
+   紙の縦横比を保ったレターボックス描画は Surface.drawLayerThumbnail() 側で行う
+   (詳しい理由はそちらのコメント参照)。ここでは実ピクセルと CSS 表示サイズを
+   一致させるだけで、object-fit のような追加の縮小・引き伸ばしはさせない。 */
+.layer-tile-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.layer-tile-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.layer-tile-eye,
+.layer-tile-up,
+.layer-tile-down {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: #f7f3ec;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.layer-tile-eye:active,
+.layer-tile-up:active,
+.layer-tile-down:active {
+  transform: scale(0.88);
+}
+
+.layer-tile-eye svg,
+.layer-tile-up svg,
+.layer-tile-down svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 隠しているかさねは、目のアイコン自体が閉じた形になるので背景も少し沈める。 */
+.layer-tile-eye.is-off {
+  background: #e4dfd3;
+}
+
+/* 効かない状態(端まで動かした/最後の1枚)。「戻る/進む」と同じ作法
+   (disabled 属性で実際に押せなくした上で、見た目も薄くする)。 */
+.layer-tile-up.is-dim,
+.layer-tile-down.is-dim,
+.layer-tile-remove.is-dim {
+  opacity: 0.35;
+}
+
+.layer-strip button:disabled {
+  cursor: default;
+}
+
+/* 「けす」。文字だけの小さいボタンなので、他のアイコンボタンより高さを抑える。 */
+.layer-tile-remove {
+  flex: none;
+  width: 88px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: #f7f3ec;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.layer-tile-remove:active {
+  transform: scale(0.92);
+}
+
 .fit-button {
   display: none;
   flex-direction: column;
