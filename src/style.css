@@ -136,7 +136,13 @@ body {
   touch-action: none;
 }
 
-/* 紙と方眼をまとめて拡大・移動させる入れ物。変形はここに掛ける。 */
+/* 紙と方眼をまとめて拡大・移動させる入れ物。変形はここに掛ける。
+ * 紙の色・角丸・影は .paper ではなくここ(入れ物側)に持たせる: この後レイヤーを
+ * 重ねるとき、いま選んでいる 1 枚(= .paper)より下に来るレイヤーは負の z-index で
+ * 敷くことになるが、負の z-index は「親の背景より上・親の通常フローの中身より下」
+ * に描かれるので、紙の色が .paper 自身の不透明な背景のままだと下のレイヤーが
+ * 隠れて見えなくなる。紙の色は入れ物(.paper-wrap)の持ち物にしておく必要がある。
+ * overflow: hidden も角丸からはみ出す層(下のレイヤー含む)を切るためここに置く。 */
 .paper-wrap {
   position: relative;
   max-width: 100%;
@@ -144,18 +150,38 @@ body {
   aspect-ratio: var(--paper-w) / var(--paper-h);
   /* viewport.ts の変換式は原点を左上に置く前提 */
   transform-origin: 0 0;
+  background: var(--paper);
+  border-radius: 14px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
 }
 
+/* position: relative; z-index: 0; で重ね順の基準点にする。
+ * z-index:0 と z-index:auto は同じ重なりの段なので、DOM 順で先頭にいる .paper は
+ * これまで通り overlay/texture/underlay/grid の下に描かれる(=見た目は変わらない)。
+ * それでいて、負の z-index を持つ兄弟(後で足す「下のレイヤー」)より上に来るという
+ * 基準点になる。 */
 .paper {
   display: block;
   width: 100%;
   height: 100%;
-  background: var(--paper);
-  border-radius: 14px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
+  position: relative;
+  z-index: 0;
   /* ブラウザ側のスクロール・ピンチを止めて描画に専念させる(ピンチは自前で処理する) */
   touch-action: none;
   cursor: crosshair;
+}
+
+/* レイヤー用の共通クラス(まだ誰も使わない、地ならし)。
+ * いま選んでいる 1 枚以外のレイヤー。指が触れるのは常に .paper(アクティブな 1 枚)
+ * だけなので pointer-events は切る。.paper より下に敷くものは JS 側で負の z-index を、
+ * 上に載せるものは .paper の直後に挿して z-index なしで重ねる(DOM 順で上に来る)。 */
+.paper-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 /* 方眼マス(下敷き)。絵の上に重ねるだけで、キャンバスには一切描かない
@@ -303,7 +329,8 @@ body {
    キャンバス(1748x1181)は画面より小さいので、ふだんは滑らかに引き伸ばされている。
    それはふつうの絵では正しいが、ドット絵ではマスの角がぼやけて意味が無くなるので、
    ここだけ最近傍にしてカクカクのまま見せる。 */
-.paper.is-pixelated {
+.paper.is-pixelated,
+.paper-layer.is-pixelated {
   image-rendering: pixelated;
 }
 
@@ -646,7 +673,7 @@ body {
 }
 
 /* みんなで描くモード中は紙のふちを目立たせ、ふだんと違う状態だと分かるようにする。 */
-.app.is-multi-draw .paper {
+.app.is-multi-draw .paper-wrap {
   box-shadow: 0 0 0 5px var(--accent), 0 6px 18px rgba(0, 0, 0, 0.14);
 }
 
