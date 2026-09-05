@@ -886,7 +886,15 @@ ruby > rt {
   flex: 1 1 auto;
   min-width: 0;
   align-items: center;
+  /*
+   * 収まっているときは中央に置きたいが、素の center のままだと溢れた分が左右へ
+   * 均等にはみ出し、左側は scrollLeft を負にできないので二度と出せなくなる
+   * (PC で「マス」を開くと先頭の「なし」が半分切れたまま左へ戻れなかった)。
+   * safe を付けると、溢れたときだけ start 揃えに倒れて左端から辿れるようになる。
+   * safe を解さない古いブラウザ向けに素の center を先に書いて残しておく。
+   */
   justify-content: center;
+  justify-content: safe center;
   gap: 12px;
   overflow-x: auto;
   /* 指はここを横スワイプできる(縦は端末側に渡さない)。 */
