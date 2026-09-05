@@ -661,8 +661,13 @@ class App {
       onSelect: (id) => this.selectLayerTile(id),
       onToggleVisible: (id) => this.toggleLayerVisibleTile(id),
       onMove: (id, direction) => this.moveLayerTile(id, direction),
+      onReorder: (id, toIndex) => this.reorderLayerTile(id, toIndex),
       onAdd: () => this.addLayerTile(),
       onRemove: (id) => this.removeLayerTile(id),
+      // ドラッグの持ち上げ/落としの合図。並べ替え自体(reorderLayerTile)には
+      // 別の音を足さない(ここで鳴らす分で「落とした」感触は十分なため)。
+      onDragLift: () => this.sound.play("poko"),
+      onDragEnd: () => this.sound.play("poko"),
     });
   }
 
@@ -2363,6 +2368,17 @@ class App {
     if (!this.surface.moveLayer(id, toIndex)) return;
     this.afterHistoryChange();
     this.sound.play("poko");
+  }
+
+  /**
+   * ドラッグでの並べ替え。toIndex は LayerStrip 側で既に Surface.moveLayer と同じ約束
+   * (0が一番下)へ変換済みなので、ここでは素直に渡すだけでよい。効果音は
+   * buildLayerStrip の onDragLift/onDragEnd 側で鳴らす(ここで重ねて鳴らすと
+   * 持ち上げ→落とすの2回に対して音が増えすぎる)。
+   */
+  private reorderLayerTile(id: string, toIndex: number): void {
+    if (!this.surface.moveLayer(id, toIndex)) return;
+    this.afterHistoryChange();
   }
 
   /**

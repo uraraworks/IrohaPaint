@@ -589,6 +589,29 @@ body {
   gap: 4px;
 }
 
+/*
+ * ドラッグで持ち上げている札(layerStrip.ts の beginDrag が付ける)。fixed で
+ * ビューポート基準に浮かせて指(マウス)へ追従させる。scale と shadow は既存の
+ * 見た目の語彙(--spring のイージング、他のボタンの押下スケール、.layer-strip-add
+ * 等と同じ shadow token)をそのまま借りるだけで、新しい色は増やさない。
+ */
+.layer-tile.is-dragging {
+  z-index: 20;
+  pointer-events: none;
+  transform: scale(1.06);
+  box-shadow: var(--shadow);
+  transition: transform 0.18s var(--spring);
+}
+
+/* 持ち上げた札の代わりに残す、見た目だけの空札(layerStrip.ts の beginDrag が生成)。
+   他の札が「ここに入る」と分かるように、枠線だけの薄い当たりを付ける。 */
+.layer-tile-placeholder {
+  flex: none;
+  box-sizing: border-box;
+  border: 2px dashed rgba(0, 0, 0, 0.15);
+  border-radius: 16px;
+}
+
 /* 札の絵そのもの。大きさ・角丸は .underlay-thumb(88px角)と揃える(設計の芯)。 */
 .layer-tile-select {
   flex: none;
