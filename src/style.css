@@ -1846,6 +1846,98 @@ ruby > rt {
   border-radius: 3px;
 }
 
+/* --- 「けす」の確かめ ---
+   かさねを消す操作は元に戻せないため、帯の「けす」から一段挟む画面中央の確かめ。
+   このアプリで唯一の「背景ごと覆うモーダル」なので、外側タップで閉じられることが
+   見た目からも分かるよう、他の要素の上に薄く影を落とす形にする(新しい色は増やさず、
+   既存の --ink をそのまま半透明にするだけに留める)。 */
+.remove-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  /* 黒ではなく --ink を薄めた影にする(新しい色を増やさない)。 */
+  background: rgba(61, 55, 48, 0.45);
+}
+
+.remove-confirm-backdrop.is-visible {
+  display: flex;
+}
+
+.remove-confirm {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  width: min(320px, calc(100vw - 48px));
+  padding: 28px 24px;
+  border-radius: 22px;
+  background: var(--bar);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.2);
+  animation: panel-in 0.24s var(--spring);
+}
+
+.remove-confirm-message {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  text-align: center;
+}
+
+/* 消そうとしているかさねの絵。帯の札(.layer-tile-thumb)と役割は同じだが、
+   ここでは選ぶボタンの中身ではなく確かめの本体なので、角丸・背景だけ
+   .layer-tile-select から借りて独立した見た目に整える。 */
+.remove-confirm-thumb {
+  width: 82px;
+  height: 82px;
+  border-radius: 16px;
+  background: #f7f3ec;
+  border: 3px solid var(--line);
+}
+
+.remove-confirm-buttons {
+  display: flex;
+  /* 押し間違い防止で 2 つのボタンを十分離す(空 gap ではなく間に空白を作る)。 */
+  justify-content: space-between;
+  gap: 32px;
+  width: 100%;
+}
+
+.remove-confirm-cancel,
+.remove-confirm-confirm {
+  flex: 1;
+  /* 指基準の当たり判定(このアプリの設計の芯 88px に準じる高さ)。 */
+  height: 64px;
+  min-width: 0;
+  border: none;
+  border-radius: 16px;
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.18s var(--spring);
+}
+
+.remove-confirm-cancel:active,
+.remove-confirm-confirm:active {
+  transform: scale(0.94);
+}
+
+/* 「やめる」は他の帯ボタンと同じ、軽い見た目(取り消しても何も起きない安全側)。 */
+.remove-confirm-cancel {
+  background: #f7f3ec;
+  color: var(--ink);
+}
+
+/* 「けす」だけ塗りつぶしにして重みを出す(取り返しがつかないことが見た目からも
+   伝わるように)。新しい色は増やさず、既存の --ink をそのまま塗りに使う。 */
+.remove-confirm-confirm {
+  background: var(--ink);
+  color: #fff;
+}
+
 /* 画面が狭い端末ではボタンを少しだけ小さくする(ただし 64px は下回らない) */
 @media (max-height: 560px), (max-width: 560px) {
   :root {

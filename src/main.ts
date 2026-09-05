@@ -64,6 +64,7 @@ import { celebrate } from "./ui/celebrate.ts";
 import { Panel } from "./ui/panel.ts";
 import { Gallery } from "./ui/gallery.ts";
 import { LayerStrip, type LayerStripItem } from "./ui/layerStrip.ts";
+import { RemoveLayerConfirm } from "./ui/removeLayerConfirm.ts";
 import { installHScroll, makeHScrollPanelRow, type HScrollControl } from "./ui/hscroll.ts";
 import {
   CHEVRON_LEFT_SVG,
@@ -318,6 +319,7 @@ class App {
    */
   private layerStrip!: LayerStrip;
   private layerStripVisible = false;
+  private removeLayerConfirm!: RemoveLayerConfirm;
 
   /**
    * 塗り方。既定は「かこみ」(色の境界まで)。
@@ -662,11 +664,22 @@ class App {
       onToggleVisible: (id) => this.toggleLayerVisibleTile(id),
       onReorder: (id, toIndex) => this.reorderLayerTile(id, toIndex),
       onAdd: () => this.addLayerTile(),
-      onRemove: (id) => this.removeLayerTile(id),
+      // 「けす」は帯からは直接消さず、まず確かめを挟む(元に戻せないため)。
+      // 実際に消す処理(removeLayerTile)は確かめで「けす」が選ばれたときだけ呼ぶ。
+      onRemove: (id) => this.confirmRemoveLayerTile(id),
       // ドラッグの持ち上げ/落としの合図。並べ替え自体(reorderLayerTile)には
       // 別の音を足さない(ここで鳴らす分で「落とした」感触は十分なため)。
       onDragLift: () => this.sound.play("poko"),
       onDragEnd: () => this.sound.play("poko"),
+    });
+    // 確かめの表示自体は Surface を知らなくてよい(帯と同じ考え方)。消してよいか
+    // 決まった後の実処理だけ、このクラス(main.ts)が引き取る。
+    this.removeLayerConfirm = new RemoveLayerConfirm(this.stage, {
+      onConfirm: (id) => this.removeLayerTile(id),
+      onCancel: () => {
+        // 「やめる」を選んだだけなので何も変えない。音も鳴らさない
+        // (guide.ts 同様、キャンセルは「何も起きなかった」ことが伝わる方が安全)。
+      },
     });
   }
 
@@ -2381,7 +2394,18 @@ class App {
     this.sound.play("poko");
   }
 
-  /** 「けす」。最後の1枚は Surface.removeLayer 自体が false を返す(ボタン側も既に無効化済み)。 */
+  /**
+   * 帯の「けす」が押された直後。ここではまだ何も消さず、画面中央に確かめを出す。
+   * 消す絵そのもの(サムネイル)を確かめ側の canvas に描き直すのは、帯の札(syncLayerStrip)
+   * と同じく Surface.drawLayerThumbnail をここで呼ぶ形にする(確かめ側は Surface を
+   * 知らなくてよい形のまま)。
+   */
+  private confirmRemoveLayerTile(id: string): void {
+    const { width, height } = this.layerThumbnailSize();
+    this.removeLayerConfirm.show(id, width, (canvas) => this.surface.drawLayerThumbnail(id, canvas));
+  }
+
+  /** 確かめで「けす」が選ばれた後の実処理。最後の1枚は Surface.removeLayer 自体が false を返す(ボタン側も既に無効化済み)。 */
   private removeLayerTile(id: string): void {
     if (!this.surface.removeLayer(id)) return;
     this.afterHistoryChange();
