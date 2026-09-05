@@ -503,8 +503,8 @@ body {
   flex-direction: column;
   align-items: center;
   /* 札と札の間(このgap)は、札の中(.layer-tile の gap)よりはっきり広くする。
-     目のマーク・上下矢印・けすは「すぐ下の札のもの」に見えやすいので、
-     隙間の広さの差だけで「この束はどの札の持ち物か」が分かるようにしておく。 */
+     「けす」は「すぐ下の札のもの」に見えやすいので、隙間の広さの差だけで
+     「この束はどの札の持ち物か」が分かるようにしておく。 */
   gap: 18px;
   width: 100%;
   padding: 2px;
@@ -518,9 +518,9 @@ body {
    * 隠れている側の端をぼかして「まだ先がある」を見せる。--fade-in/--fade-out は
    * installOverflowFade(layerStrip.ts)がスクロール位置に応じて切り替える
    * is-overflow-top/bottom 側だけ値を持たせる。
-   * 送りボタンを付けない理由: 8 枚では送りボタンが縦にずらずら並び、他の操作ボタン
-   * (目・矢印・けす)と紛れて余計に「どの札のものか」が分かりにくくなる
-   * (hscroll.ts のパネル行のコメントと同じ判断)。
+   * 送りボタンを付けない理由: 8 枚では送りボタンが縦にずらずら並び、「けす」と紛れて
+   * 余計に「どの札のものか」が分かりにくくなる(hscroll.ts のパネル行のコメントと
+   * 同じ判断)。並べ替え自体はドラッグに一本化してある。
    */
   --fade-in: 0px;
   --fade-out: 0px;
@@ -635,6 +635,13 @@ body {
   border-color: var(--accent);
 }
 
+/* 隠れている札は半透明にして状態を示す(目のマークを無くした代わり)。
+   新しい色は増やさず、既存の transform と同じ --spring のイージングだけ足す。 */
+.layer-tile.is-hidden .layer-tile-select {
+  opacity: 0.35;
+  transition: opacity 0.18s var(--spring), transform 0.18s var(--spring);
+}
+
 /* 札の canvas は実ピクセルから正方形(.layer-tile-select の中身と同じ82x82)にしてあり、
    紙の縦横比を保ったレターボックス描画は Surface.drawLayerThumbnail() 側で行う
    (詳しい理由はそちらのコメント参照)。ここでは実ピクセルと CSS 表示サイズを
@@ -645,50 +652,8 @@ body {
   height: 100%;
 }
 
-.layer-tile-controls {
-  display: flex;
-  gap: 4px;
-}
-
-.layer-tile-eye,
-.layer-tile-up,
-.layer-tile-down {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: none;
-  border-radius: 10px;
-  background: #f7f3ec;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: transform 0.18s var(--spring);
-}
-
-.layer-tile-eye:active,
-.layer-tile-up:active,
-.layer-tile-down:active {
-  transform: scale(0.88);
-}
-
-.layer-tile-eye svg,
-.layer-tile-up svg,
-.layer-tile-down svg {
-  width: 20px;
-  height: 20px;
-}
-
-/* 隠しているかさねは、目のアイコン自体が閉じた形になるので背景も少し沈める。 */
-.layer-tile-eye.is-off {
-  background: #e4dfd3;
-}
-
-/* 効かない状態(端まで動かした/最後の1枚)。「戻る/進む」と同じ作法
+/* 効かない状態(最後の1枚)。「戻る/進む」と同じ作法
    (disabled 属性で実際に押せなくした上で、見た目も薄くする)。 */
-.layer-tile-up.is-dim,
-.layer-tile-down.is-dim,
 .layer-tile-remove.is-dim {
   opacity: 0.35;
 }
@@ -697,7 +662,8 @@ body {
   cursor: default;
 }
 
-/* 「けす」。文字だけの小さいボタンなので、他のアイコンボタンより高さを抑える。 */
+/* 「けす」。目・上下矢印を無くして当たり判定が絵(88px)だけになった分、
+   このバーは札の幅いっぱい(88px)の横長にして、高さの少なさを幅で補う。 */
 .layer-tile-remove {
   flex: none;
   width: 88px;

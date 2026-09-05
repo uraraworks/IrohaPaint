@@ -11,7 +11,7 @@
 // ハンドラへ伝え、Surface を触るのは呼び出し側(main.ts)の役目にする
 // (このモジュールは Surface を知らなくてよい形にしておく)。
 import { plainText, renderRuby } from "./label.ts";
-import { CHEVRON_DOWN_SVG, CHEVRON_UP_SVG, EYE_CLOSED_SVG, EYE_OPEN_SVG, NEW_PAGE_SVG } from "./icons.ts";
+import { NEW_PAGE_SVG } from "./icons.ts";
 
 /** 帯の 1 枚ぶんの状態。Surface.layerList の要素とそのまま渡し合える形にしてある。 */
 export interface LayerStripItem {
@@ -22,9 +22,10 @@ export interface LayerStripItem {
 }
 
 export interface LayerStripHandlers {
+  /** 選ばれていない札をタップ: そのかさねへ切り替える。 */
   onSelect(id: string): void;
+  /** 選ばれている札をもう一度タップ: そのかさねの見せる/隠すを切り替える。 */
   onToggleVisible(id: string): void;
-  onMove(id: string, direction: "up" | "down"): void;
   /**
    * ドラッグでの並べ替え。toIndex は Surface.moveLayer と同じ約束(0 が一番下)。
    * 呼び出し側で実際に並びが変わったときだけ呼ぶ(掴んで戻しただけなら呼ばない)。
@@ -48,10 +49,9 @@ const TEXT = {
   add: [{ base: "＋" }, { base: "ふ" }, { base: "やす" }],
   remove: [{ base: "けす" }],
   select: [{ base: "この" }, { base: "かさねに" }, { base: "きりかえる" }],
-  up: [{ base: "うえへ" }],
-  down: [{ base: "したへ" }],
-  show: [{ base: "みせる" }],
-  hide: [{ base: "かくす" }],
+  // 選ばれている札をもう一度タップしたときの aria-label(状態に応じて出し分ける)。
+  show: [{ base: "この" }, { base: "かさねを" }, { base: "みせる" }],
+  hide: [{ base: "この" }, { base: "かさねを" }, { base: "かくす" }],
 } as const;
 
 /** 指の長押し待ち。長押しが確定する前に動いたらスクロールとみなして諦める(マウスも同じ枠に間借りさせる)。 */
@@ -165,11 +165,8 @@ export class LayerStrip {
     // layerList は下から順(index 0 が一番下)。上から表示したいので逆順にたどる。
     // 逆順にした並びの先頭(index 0)がいちばん上のかさねになる。
     const display = [...items].reverse();
-    for (let i = 0; i < display.length; i += 1) {
-      const item = display[i] as LayerStripItem;
-      const isTopmost = i === 0;
-      const isBottommost = i === display.length - 1;
-      const tile = this.buildTile(item, isTopmost, isBottommost, display.length);
+    for (const item of display) {
+      const tile = this.buildTile(item, display.length);
       this.track.appendChild(tile);
       if (renderThumbnail !== undefined) {
         const canvas = tile.querySelector<HTMLCanvasElement>(".layer-tile-thumb");
@@ -190,56 +187,31 @@ export class LayerStrip {
     return button;
   }
 
-  private buildTile(item: LayerStripItem, isTopmost: boolean, isBottommost: boolean, count: number): HTMLElement {
+  private buildTile(item: LayerStripItem, count: number): HTMLElement {
     const tile = document.createElement("div");
     tile.className = "layer-tile";
     tile.classList.toggle("is-active", item.active);
+    // 隠れている札は半透明にして示す(目のマークが無くなった分、絵そのものの見え方で
+    // 状態を表す)。
+    tile.classList.toggle("is-hidden", !item.visible);
     tile.dataset.layerId = item.id; // ドラッグ並べ替え(installDragReorder)がここから id を拾う
 
+    // 札の当たり判定は 88px の絵そのものだけ(設計の芯)。押した意味は状態で変わる:
+    // 選ばれていない札 → そのかさねへ切り替える。選ばれている札をもう一度 →
+    // そのかさねの見せる/隠すを切り替える。並べ替えはドラッグに一本化してあるので、
+    // 上下ボタン・目のボタンは無い。
     const select = document.createElement("button");
     select.className = "layer-tile-select";
-    select.setAttribute("aria-label", plainText(TEXT.select));
+    const label = item.active ? (item.visible ? TEXT.hide : TEXT.show) : TEXT.select;
+    select.setAttribute("aria-label", plainText(label));
     const thumb = document.createElement("canvas");
     thumb.className = "layer-tile-thumb";
     select.appendChild(thumb);
-    select.addEventListener("click", () => this.handlers.onSelect(item.id));
+    select.addEventListener("click", () => {
+      if (item.active) this.handlers.onToggleVisible(item.id);
+      else this.handlers.onSelect(item.id);
+    });
     tile.appendChild(select);
-
-    const controls = document.createElement("div");
-    controls.className = "layer-tile-controls";
-
-    const eye = document.createElement("button");
-    eye.className = "layer-tile-eye";
-    eye.innerHTML = item.visible ? EYE_OPEN_SVG : EYE_CLOSED_SVG;
-    eye.classList.toggle("is-off", !item.visible);
-    eye.setAttribute("aria-label", plainText(item.visible ? TEXT.hide : TEXT.show));
-    eye.addEventListener("click", () => this.handlers.onToggleVisible(item.id));
-    controls.appendChild(eye);
-
-    // 上下の矢印は選ばれている札にだけ出す(選んでいない札を動かすのは操作として迷う)。
-    if (item.active) {
-      const up = document.createElement("button");
-      up.className = "layer-tile-up";
-      up.innerHTML = CHEVRON_UP_SVG;
-      up.setAttribute("aria-label", plainText(TEXT.up));
-      // 端(一番上)では押しても意味が無い。「戻る/進む」と同じく、disabled + 薄い見た目で
-      // 実際に押せなくする(押せるのに何も起きない、を作らない)。
-      up.disabled = isTopmost;
-      up.classList.toggle("is-dim", isTopmost);
-      up.addEventListener("click", () => this.handlers.onMove(item.id, "up"));
-      controls.appendChild(up);
-
-      const down = document.createElement("button");
-      down.className = "layer-tile-down";
-      down.innerHTML = CHEVRON_DOWN_SVG;
-      down.setAttribute("aria-label", plainText(TEXT.down));
-      down.disabled = isBottommost;
-      down.classList.toggle("is-dim", isBottommost);
-      down.addEventListener("click", () => this.handlers.onMove(item.id, "down"));
-      controls.appendChild(down);
-    }
-
-    tile.appendChild(controls);
 
     // 「けす」も選ばれている札にだけ出す。最後の 1 枚は消せない(Surface.removeLayer と同じ条件)。
     if (item.active) {
@@ -289,9 +261,8 @@ export class LayerStrip {
     if (this.dragState !== null || this.pendingLift !== null) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     const target = event.target as HTMLElement;
-    // 目・上下矢印・けすの上から始めたときはドラッグにしない(それぞれのボタン自身の
-    // click をそのまま生かす)。
-    if (target.closest(".layer-tile-eye, .layer-tile-up, .layer-tile-down, .layer-tile-remove") !== null) return;
+    // 「けす」の上から始めたときはドラッグにしない(ボタン自身の click をそのまま生かす)。
+    if (target.closest(".layer-tile-remove") !== null) return;
     const tile = target.closest<HTMLElement>(".layer-tile");
     if (tile === null) return;
     const id = tile.dataset.layerId;

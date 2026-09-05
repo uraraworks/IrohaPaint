@@ -267,6 +267,7 @@ export class Surface {
     time = 0,
     pressure?: number,
   ): void {
+    this.revealActiveLayerIfHidden();
     const dynamics = style.dynamics ?? NIB_DEFS.crayon.dynamics;
     const dirty = new DirtyRect();
     dirty.add(x, y, style.size * dynamics.maxWidthRatio);
@@ -361,6 +362,7 @@ export class Surface {
    * マスの色を見て、同じ色のマスへ伝播させる。
    */
   fillCells(grid: CellGrid, x: number, y: number, color: string): FillRect | null {
+    this.revealActiveLayerIfHidden();
     const image = this.ctx.getImageData(0, 0, this.width, this.height);
     const hex = (value: number): string => value.toString(16).padStart(2, "0");
     /** そのマスに置かれているビーズの色。空なら "empty"。 */
@@ -948,6 +950,21 @@ export class Surface {
     this.restack();
   }
 
+  /**
+   * 隠れているかさねへ描き込みが起きたら、自動で見えるようにする。
+   * ストローク開始・塗りつぶし・図形塗りなど、アクティブなかさねへ書き込む
+   * すべての入り口の先頭で呼ぶ(このファイル内で this.ctx/this.paintCell に
+   * 書き込む前を grep 済み)。隠れたまま描くと紙には何も現れず、なぜ変わらないのか
+   * 子どもには分からない。「描いたら出てくる」の一本に倒せば、詰まる状態が
+   * 原理的に無くなる。
+   */
+  private revealActiveLayerIfHidden(): void {
+    const active = this.layers[this.activeIndex];
+    if (active === undefined || active.visible) return;
+    active.visible = true;
+    this.restack();
+  }
+
   setLayerOpacity(id: string, opacity: number): void {
     const layer = this.layers.find((candidate) => candidate.id === id);
     if (layer === undefined) return;
@@ -1060,9 +1077,16 @@ export class Surface {
         // ただし visible/opacity の実体はこの layer.canvas ではなく this.canvas 側にある。
         // 控えを隠すだけでは this.canvas がそのまま見え続けてしまう(= 画面には出るのに
         // composite() は visible=false を飛ばすので保存 PNG と食い違う)ため、
-        // 非アクティブなレイヤーと同じ visibility/opacity をここで this.canvas にも反映する。
-        this.canvas.style.visibility = layer.visible ? "" : "hidden";
-        this.canvas.style.opacity = String(layer.opacity);
+        // 非アクティブなレイヤーと同じ見えなさをここで this.canvas にも反映する。
+        // ここは visibility ではなく opacity:0 で消す(隠れたアクティブなかさねは
+        // visibility:hidden にすると当たり判定ごと無くなり、pointerdown が
+        // installPointerInput(canvas 直づけ)へ届かなくなる。それだと
+        // revealActiveLayerIfHidden が「描いたら見せる」ために beginStroke の先頭に
+        // 置いてあっても、そもそも描画イベント自体が発火せず一生届かない
+        // = 隠したら二度と描けなくなる、という本末転倒が起きる。opacity:0 なら
+        // 見た目は同じく消えつつ、指(マウス)は引き続き受け取れる)。
+        this.canvas.style.visibility = "";
+        this.canvas.style.opacity = layer.visible ? String(layer.opacity) : "0";
         continue;
       }
       layer.canvas.style.display = "";
@@ -1145,6 +1169,7 @@ export class Surface {
    * 塗っていない画素は透明のまま素通りし、下の絵を消さずに済む。
    */
   fill(x: number, y: number, color: Rgba): FillRect | null {
+    this.revealActiveLayerIfHidden();
     const flat = this.composite();
     const flatCtx = flat.getContext("2d");
     if (flatCtx === null) throw new Error("2D コンテキストを取得できませんでした");
@@ -1203,6 +1228,7 @@ export class Surface {
    * 色の境界を一切見ないので、線が切れていても、ビーズの隙間があっても漏れない。
    */
   fillShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, cells: CellGrid | null): FillRect | null {
+    this.revealActiveLayerIfHidden();
     this.clearShapePreview();
     const box = shapeBox(x0, y0, x1, y1, this.width, this.height);
     return this.paintShape(this.ctx, mode, box, color, cells);

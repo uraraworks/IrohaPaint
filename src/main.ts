@@ -660,7 +660,6 @@ class App {
     this.layerStrip = new LayerStrip(this.stage, {
       onSelect: (id) => this.selectLayerTile(id),
       onToggleVisible: (id) => this.toggleLayerVisibleTile(id),
-      onMove: (id, direction) => this.moveLayerTile(id, direction),
       onReorder: (id, toIndex) => this.reorderLayerTile(id, toIndex),
       onAdd: () => this.addLayerTile(),
       onRemove: (id) => this.removeLayerTile(id),
@@ -2327,17 +2326,22 @@ class App {
   }
 
   /**
-   * 目のアイコン。見せる/隠すを切り替える。
-   * E: 表示を切ったときの安全策 ―― いま選んでいるかさねを隠したら、隣の見えているかさね
-   * (下優先・無ければ上)へ自動で切り替える(描いても何も出ない状態を子どもが自力で
-   * 抜けられなくなるため)。ただし見えているかさねが他に1枚も無いときは、隠すこと自体を
-   * 行わない(全部消えて白紙になり、何が起きたか分からなくなるため)。
+   * 選ばれている札をもう一度タップ: 見せる/隠すを切り替える。
+   * 目のアイコンを無くした分、この操作は「いま選んでいるかさね」にしか効かない
+   * (選ばれていない札のタップは selectLayerTile 側で拾う。layerStrip.ts 参照)。
+   *
+   * ここでは「いま選んでいるかさねを隠したら隣へ自動で切り替える」手当てはしない
+   * (以前はあったが、切り替わってしまうと、もう一度タップしても「選ぶ」に戻り、
+   * 元に戻す動作にならず2で決めた作法と噛み合わなくなる)。代わりに
+   * Surface.beginStroke 等が「隠れたまま描いたら自動で見せる」を担う
+   * (surface.ts の revealActiveLayerIfHidden 参照)。
+   * ただし見えているかさねが他に1枚も無いときは、隠すこと自体を行わない
+   * (全部消えて白紙になり、何が起きたか分からなくなるため。この判断は維持する)。
    */
   private toggleLayerVisibleTile(id: string): void {
     const items = this.surface.layerList;
-    const index = items.findIndex((item) => item.id === id);
-    if (index === -1) return;
-    const target = items[index] as LayerStripItem;
+    const target = items.find((item) => item.id === id);
+    if (target === undefined) return;
     const hiding = target.visible;
 
     if (hiding) {
@@ -2346,28 +2350,8 @@ class App {
     }
 
     this.surface.setLayerVisible(id, !hiding);
-
-    if (hiding && target.active) {
-      // 下(いま隠したかさねより手前=index が小さい側)を優先、無ければ上を探す。
-      const below = [...items.slice(0, index)].reverse().find((item) => item.visible);
-      const above = items.slice(index + 1).find((item) => item.visible);
-      const next = below ?? above;
-      if (next !== undefined) this.surface.setActiveLayer(next.id);
-    }
-
     this.afterHistoryChange();
     this.sound.play(hiding ? "shu" : "poko");
-  }
-
-  /** 上下の矢印。moveLayer の toIndex は 0 が一番下なので、「うえ」は index+1、「した」は index-1。 */
-  private moveLayerTile(id: string, direction: "up" | "down"): void {
-    const items = this.surface.layerList;
-    const index = items.findIndex((item) => item.id === id);
-    if (index === -1) return;
-    const toIndex = direction === "up" ? index + 1 : index - 1;
-    if (!this.surface.moveLayer(id, toIndex)) return;
-    this.afterHistoryChange();
-    this.sound.play("poko");
   }
 
   /**
