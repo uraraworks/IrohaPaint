@@ -58,6 +58,9 @@ export function floodFill(
   color: Rgba,
   tolerance = 24,
   expand = 2,
+  // 合成結果(見えているもの)で判定して、書き込みは別のバッファ(=いま選んでいるレイヤー)
+  // へ回すために使う。省略時は従来通り data 自身に書き込む。
+  out?: Uint8ClampedArray,
 ): FillResult | null {
   if (startX < 0 || startY < 0 || startX >= width || startY >= height) return null;
 
@@ -138,14 +141,16 @@ export function floodFill(
     maxY = Math.min(height - 1, maxY + 1);
   }
 
+  // out が渡されていればそちらへ書く(判定に使った data は書き換えない)。
+  const writeTarget = out ?? data;
   for (let y = minY; y <= maxY; y += 1) {
     for (let x = minX; x <= maxX; x += 1) {
       if (mask[y * width + x] === 0) continue;
       const offset = (y * width + x) * 4;
-      data[offset] = color.r;
-      data[offset + 1] = color.g;
-      data[offset + 2] = color.b;
-      data[offset + 3] = color.a;
+      writeTarget[offset] = color.r;
+      writeTarget[offset + 1] = color.g;
+      writeTarget[offset + 2] = color.b;
+      writeTarget[offset + 3] = color.a;
     }
   }
 

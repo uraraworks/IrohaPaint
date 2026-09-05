@@ -63,4 +63,28 @@ describe("floodFill", () => {
     expect(floodFill(data, 3, 3, -1, 0, RED)).toBeNull();
     expect(floodFill(data, 3, 3, 3, 0, RED)).toBeNull();
   });
+
+  it("out を渡すと判定元の data は書き換わらない", () => {
+    const data = makeCanvas(3, 3);
+    const before = data.slice();
+    const out = new Uint8ClampedArray(data.length);
+    floodFill(data, 3, 3, 0, 0, RED, 24, 0, out);
+    expect(data).toEqual(before);
+  });
+
+  it("out を渡すと、塗った画素だけ out に色が入り残りは透明のまま", () => {
+    const w = 5;
+    const data = makeCanvas(w, 3);
+    // 真ん中の列を黒い壁にする(壁の左だけが塗られる)
+    for (let y = 0; y < 3; y += 1) {
+      const o = (y * w + 2) * 4;
+      data[o] = 0;
+      data[o + 1] = 0;
+      data[o + 2] = 0;
+    }
+    const out = new Uint8ClampedArray(data.length);
+    floodFill(data, w, 3, 0, 0, RED, 24, 0, out);
+    expect(pixel(out, w, 1, 1)).toEqual([255, 0, 0, 255]); // 壁の左は out に塗られる
+    expect(pixel(out, w, 3, 1)).toEqual([0, 0, 0, 0]); // 塗られていない画素は透明のまま
+  });
 });

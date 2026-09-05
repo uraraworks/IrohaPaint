@@ -986,6 +986,12 @@ export class Surface {
       if (i === this.activeIndex) {
         // アクティブの画素は this.canvas 側にあるので、控えを出すと二重に見える。
         layer.canvas.style.display = "none";
+        // ただし visible/opacity の実体はこの layer.canvas ではなく this.canvas 側にある。
+        // 控えを隠すだけでは this.canvas がそのまま見え続けてしまう(= 画面には出るのに
+        // composite() は visible=false を飛ばすので保存 PNG と食い違う)ため、
+        // 非アクティブなレイヤーと同じ visibility/opacity をここで this.canvas にも反映する。
+        this.canvas.style.visibility = layer.visible ? "" : "hidden";
+        this.canvas.style.opacity = String(layer.opacity);
         continue;
       }
       layer.canvas.style.display = "";
@@ -1014,9 +1020,11 @@ export class Surface {
    * 全レイヤーを下から順に 1 枚へ焼いて合成する。紙の色は塗らない(呼び出し側が従来通り塗る)。
    * アクティブなレイヤーだけは控え canvas ではなく this.canvas(= 画素の実体)を使う。
    *
-   * pick() / pickCell() / fill() は色鉛筆・スポイト・ぬりつぶしが this.canvas(=アクティブな
-   * 1 枚)だけを見て判定する処理で、本来は合成後の見た目を見るべきだが、複数レイヤーを
-   * 跨いだ塗りつぶし/スポイトは挙動の設計がまだ無いため今回は触らない(別の段で対応する)。
+   * pick() / pickCell() / fill() はここで作った合成結果を判定に使う。
+   * 線画を下のレイヤーに、色をその上の透明なレイヤーに置く使い方が一番ありそうで、
+   * その場合アクティブな 1 枚(=上のレイヤー)だけを見ると囲みが無く紙全体に
+   * 漏れてしまう(スポイトも下の色を吸えない)。見えているもの(合成結果)で
+   * 判定し、書き込み先だけはいま選んでいる 1 枚に絞るのが正しい。
    */
   private composite(): HTMLCanvasElement {
     const flat = document.createElement("canvas");
@@ -1050,13 +1058,38 @@ export class Surface {
 
   // --- 道具 -------------------------------------------------------------
 
-  /** 「ぬりつぶし」。塗った矩形を返す(何も塗らなければ null)。 */
+  /**
+   * 「ぬりつぶし」。塗った矩形を返す(何も塗らなければ null)。
+   *
+   * 判定は合成結果(見えているもの)で行い、書き込みはいま選んでいる 1 枚だけに絞る。
+   * そのため out に別バッファを渡し、判定元の image.data は書き換えない。
+   * out をそのまま this.ctx へ putImageData すると、塗っていない画素のアルファまで
+   * 0 で上書きしてしまい、そのレイヤーの既存の絵が矩形ごと消える。
+   * 一時 canvas に一度置いてから drawImage(source-over) で重ねることで、
+   * 塗っていない画素は透明のまま素通りし、下の絵を消さずに済む。
+   */
   fill(x: number, y: number, color: Rgba): FillRect | null {
-    const image = this.ctx.getImageData(0, 0, this.width, this.height);
-    const rect = floodFill(image.data, this.width, this.height, Math.round(x), Math.round(y), color);
+    const flat = this.composite();
+    const flatCtx = flat.getContext("2d");
+    if (flatCtx === null) throw new Error("2D コンテキストを取得できませんでした");
+    const image = flatCtx.getImageData(0, 0, this.width, this.height);
+    const out = new Uint8ClampedArray(image.data.length);
+    const rect = floodFill(image.data, this.width, this.height, Math.round(x), Math.round(y), color, 24, 2, out);
     if (rect === null) return null;
+
+    const patch = document.createElement("canvas");
+    patch.width = this.width;
+    patch.height = this.height;
+    const patchCtx = patch.getContext("2d");
+    if (patchCtx === null) throw new Error("2D コンテキストを取得できませんでした");
+    patchCtx.putImageData(new ImageData(out, this.width, this.height), 0, 0);
+
     this.ctx.globalCompositeOperation = "source-over";
-    this.ctx.putImageData(image, 0, 0);
+    this.ctx.drawImage(
+      patch,
+      rect.x, rect.y, rect.width, rect.height,
+      rect.x, rect.y, rect.width, rect.height,
+    );
     return rect;
   }
 
@@ -1134,11 +1167,14 @@ export class Surface {
    * ビーズで中心の画素を読むと、穴(透明)を拾って紙の色を吸ってしまう。
    */
   pickCell(grid: CellGrid, x: number, y: number): string | null {
+    // 候補点を何点も見るので、点ごとに合成し直すと重い。合成は 1 回だけにして使い回す。
+    const flatCtx = this.composite().getContext("2d");
+    if (flatCtx === null) throw new Error("2D コンテキストを取得できませんでした");
     const { col, row } = cellOf(grid, x, y);
     for (const [px, py] of cellProbePoints(grid, col, row)) {
       const ix = Math.min(this.width - 1, Math.max(0, Math.floor(px)));
       const iy = Math.min(this.height - 1, Math.max(0, Math.floor(py)));
-      const data = this.ctx.getImageData(ix, iy, 1, 1).data;
+      const data = flatCtx.getImageData(ix, iy, 1, 1).data;
       if ((data[3] ?? 0) < 8) continue;
       const hex = (value: number): string => value.toString(16).padStart(2, "0");
       return `#${hex(data[0] ?? 0)}${hex(data[1] ?? 0)}${hex(data[2] ?? 0)}`;
@@ -1146,12 +1182,14 @@ export class Surface {
     return null;
   }
 
-  /** 「スポイト」。透明部分(消しゴム跡)は紙の色として扱う。 */
+  /** 「スポイト」。合成結果(見えているもの)から吸う。透明部分(消しゴム跡)は紙の色として扱う。 */
   pick(x: number, y: number): string | null {
     const px = Math.round(x);
     const py = Math.round(y);
     if (px < 0 || py < 0 || px >= this.width || py >= this.height) return null;
-    const data = this.ctx.getImageData(px, py, 1, 1).data;
+    const flatCtx = this.composite().getContext("2d");
+    if (flatCtx === null) throw new Error("2D コンテキストを取得できませんでした");
+    const data = flatCtx.getImageData(px, py, 1, 1).data;
     const alpha = data[3] ?? 0;
     if (alpha < 8) return PAPER_COLOR;
     const hex = (value: number): string => value.toString(16).padStart(2, "0");
