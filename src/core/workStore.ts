@@ -1,7 +1,14 @@
 // 作品ストアの永続化。IndexedDB に作品レコードをそのまま入れる。
 // Blob は IndexedDB がそのまま格納できる(structured clone)ので、
 // PNG を base64 化するような無駄な変換はしない。
-import { CANVAS_HEIGHT, CANVAS_WIDTH, SCHEMA_VERSION, type PageData, type WorkRecord } from "./model.ts";
+import {
+  CANVAS_HEIGHT,
+  CANVAS_WIDTH,
+  defaultLayers,
+  SCHEMA_VERSION,
+  type PageData,
+  type WorkRecord,
+} from "./model.ts";
 import { isPaperKind } from "./paper.ts";
 
 export interface StoredEnvelope {
@@ -86,12 +93,15 @@ function promisify<T>(request: IDBRequest<T>): Promise<T> {
 /**
  * バージョン不一致・壊れたレコードは無視する(復元に失敗しても起動はする)。
  *
- * canvasWidth/canvasHeight・pages[].deleted・paperKind は後から足したフィールドなので、
- * 古い保存データには入っていない。SCHEMA_VERSION を上げて古い作品ごと捨てる
- * ようなことは絶対にしない(子どもの絵なので)。代わりにここで欠けている分だけ
+ * canvasWidth/canvasHeight・pages[].deleted・paperKind・pages[].layers は後から足した
+ * フィールドなので、古い保存データには入っていない。SCHEMA_VERSION を上げて古い作品ごと
+ * 捨てるようなことは絶対にしない(子どもの絵なので)。代わりにここで欠けている分だけ
  * 補う。今ある保存データは全部 CANVAS_WIDTH x CANVAS_HEIGHT・"plain" で描かれたものなので、
  * その値で補って正しい。deleted も未指定なら「消していない」で正しい。
  * paperKind は不正な値(壊れたデータ・型が合わないもの)でも "plain" に落とす。
+ * layers が無い・配列でない・空の場合は defaultLayers() で「合成結果(page.image)を
+ * 唯一のレイヤーとする」形に補う。安定 id(ページ id から作る)なので、何度読み込んでも
+ * 同じ id になる。
  */
 export function unwrap(raw: unknown): WorkRecord | null {
   const envelope = raw as StoredEnvelope | undefined;
@@ -105,7 +115,11 @@ export function unwrap(raw: unknown): WorkRecord | null {
     canvasWidth: work.canvasWidth ?? CANVAS_WIDTH,
     canvasHeight: work.canvasHeight ?? CANVAS_HEIGHT,
     paperKind: isPaperKind(work.paperKind) ? work.paperKind : "plain",
-    pages: work.pages.map((page: PageData) => ({ ...page, deleted: page.deleted ?? false })),
+    pages: work.pages.map((page: PageData) => ({
+      ...page,
+      deleted: page.deleted ?? false,
+      layers: Array.isArray(page.layers) && page.layers.length > 0 ? page.layers : defaultLayers(page.id, page.image),
+    })),
   };
 }
 

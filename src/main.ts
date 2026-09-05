@@ -17,6 +17,7 @@ import {
   CANVAS_SIZES,
   CANVAS_WIDTH,
   createWork,
+  defaultLayers,
   snapshotOf,
   type CanvasSizeId,
   type CellGrid,
@@ -2467,10 +2468,14 @@ class App {
       work = createWork(png, now, thumbnail);
     } else {
       const page = work.pages[0];
+      const pageId = page?.id ?? "page-0";
       work = {
         ...work,
         updatedAt: now,
-        pages: [{ id: page?.id ?? "page-0", image: png, deleted: page?.deleted ?? false }],
+        // Surface がまだレイヤーを持たないので、いまは合成結果 1 枚をそのまま唯一の
+        // レイヤーとして書く。Surface がレイヤーを持つようになったらここで各レイヤーの
+        // PNG を書く(id は defaultLayers() 任せにせず、既存レイヤーの id を引き継ぐ形になる)。
+        pages: [{ id: pageId, image: png, deleted: page?.deleted ?? false, layers: defaultLayers(pageId, png) }],
         thumbnail,
       };
       // 「前に戻す」用の履歴。描いている間は数分おきに 1 件だけ積む(追記のみ)。

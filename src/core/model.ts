@@ -111,10 +111,47 @@ export const DOT_GRID: CellGrid = createCellGrid(DOT_COLS, DOT_ROWS, false, CANV
 /** スキーマ変更時に上げる。読み込み時に不一致なら復元しない(壊れたデータで起動しない)。 */
 export const SCHEMA_VERSION = 1;
 
+/**
+ * レイヤー 1 枚。まだ UI・描画とも実装は無い(Surface は今のところ 1 枚しか持たない)。
+ * それでも先にフィールドだけ入れておく理由は PageData と同じ:
+ * 利用者の端末にある既存の保存データには後から書き込めないので、
+ * レイヤー機能を作ってからでは間に合わない。
+ */
+export interface LayerData {
+  id: string;
+  /** そのレイヤーだけの絵。PNG(透過あり)。 */
+  image: Blob;
+  /** 表示 / 非表示。 */
+  visible: boolean;
+  /** 0..1。オニオンスキン(前のコマを薄く敷く)にもこの値を使う想定。 */
+  opacity: number;
+  /**
+   * ソフトデリート。WorkRecord.deleted / PageData.deleted と同じ規則をレイヤーにも通す。
+   * 「消したレイヤーが戻せない」を起きなくするための下ごしらえ。
+   */
+  deleted: boolean;
+}
+
+/**
+ * ページ生成時点の既定レイヤー構成(いまは常に 1 枚)を作る。
+ *
+ * id をページ id から作る(`${pageId}-layer-0`)のは、読み込むたびに変わらない
+ * 安定した値にするため。createId() で作ると unwrap() のたびに別 id になってしまい、
+ * 「同じレイヤーのはずなのに id が毎回変わる」という不整合が起きる。
+ */
+export function defaultLayers(pageId: string, image: Blob): LayerData[] {
+  return [{ id: `${pageId}-layer-0`, image, visible: true, opacity: 1, deleted: false }];
+}
+
 /** ページ 1 枚。画像は PNG の Blob で持つ(Canvas との往復が最も素直)。 */
 export interface PageData {
   id: string;
-  /** ページの絵。PNG。 */
+  /**
+   * ページの絵。PNG。
+   * レイヤーを持つようになった後も、これは「全レイヤーを重ねた結果」を持ち続ける。
+   * サムネイル・書き出し・みんなの部屋はこの合成結果だけ見ればよく、レイヤー構成を
+   * 知らなくて済むので、ここを捨てない(合成のたびに作り直すような無駄もしない)。
+   */
   image: Blob;
   /**
    * ソフトデリート。作品(WorkRecord.deleted)と同じ規則をページにも通す。
@@ -123,6 +160,13 @@ export interface PageData {
    * (振る舞いは変わらない。フィールドを用意するだけ)。
    */
   deleted: boolean;
+  /**
+   * レイヤー。下から順に並べる(layers[0] が一番下)。
+   * 古い保存データには無いフィールドなので、workStore.ts の unwrap() で読むときに
+   * 欠けていたら defaultLayers() で「合成結果 1 枚だけのレイヤー」を補う。
+   * 型では必須にしておく(canvasWidth と同じ作法。実装側は常に埋まっている前提で書ける)。
+   */
+  layers: LayerData[];
 }
 
 /**
@@ -262,6 +306,7 @@ export function createWork(
   canvasHeight: number = CANVAS_HEIGHT,
   paperKind: PaperKind = "plain",
 ): WorkRecord {
+  const pageId = createId("page");
   return {
     id: createId("work"),
     createdAt: now,
@@ -272,7 +317,7 @@ export function createWork(
     canvasHeight,
     paperKind,
     ...(thumbnail === undefined ? {} : { thumbnail }),
-    pages: [{ id: createId("page"), image, deleted: false }],
+    pages: [{ id: pageId, image, deleted: false, layers: defaultLayers(pageId, image) }],
     snapshots: [],
   };
 }

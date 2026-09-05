@@ -192,6 +192,56 @@ describe("workStore の unwrap(古い保存データの読み込み)", () => {
     const envelope = { version: SCHEMA_VERSION + 1, work } as StoredEnvelope;
     expect(unwrap(envelope)).toBeNull();
   });
+
+  it("layers の無い古い形のデータは、ページの image を唯一のレイヤーとして補う", () => {
+    // 公開前に保存された形を模す(pages[].layers 無し)。
+    const legacyWork = {
+      id: "work-legacy",
+      createdAt: 1,
+      updatedAt: 1,
+      markId: null,
+      deleted: false,
+      pages: [{ id: "page-legacy", image: dummy }],
+      snapshots: [],
+    } as unknown as WorkRecord;
+    const envelope: StoredEnvelope = { version: SCHEMA_VERSION, work: legacyWork };
+
+    const restored = unwrap(envelope);
+
+    expect(restored?.pages[0]?.layers.length).toBe(1);
+    expect(restored?.pages[0]?.layers[0]?.image).toBe(dummy);
+    expect(restored?.pages[0]?.layers[0]?.visible).toBe(true);
+    expect(restored?.pages[0]?.layers[0]?.opacity).toBe(1);
+    expect(restored?.pages[0]?.layers[0]?.deleted).toBe(false);
+    expect(restored?.pages[0]?.layers[0]?.id).toBe("page-legacy-layer-0");
+  });
+
+  it("同じデータを 2 回 unwrap してもレイヤー id は変わらない(安定 id の担保)", () => {
+    const legacyWork = {
+      id: "work-legacy",
+      createdAt: 1,
+      updatedAt: 1,
+      markId: null,
+      deleted: false,
+      pages: [{ id: "page-legacy", image: dummy }],
+      snapshots: [],
+    } as unknown as WorkRecord;
+    const envelope: StoredEnvelope = { version: SCHEMA_VERSION, work: legacyWork };
+
+    const first = unwrap(envelope);
+    const second = unwrap(envelope);
+
+    expect(first?.pages[0]?.layers[0]?.id).toBe(second?.pages[0]?.layers[0]?.id);
+  });
+
+  it("createWork() で作った新しい形のデータは layers がそのまま保たれる", () => {
+    const work = createWork(dummy, 1000);
+    const envelope: StoredEnvelope = { version: SCHEMA_VERSION, work };
+
+    const restored = unwrap(envelope);
+
+    expect(restored?.pages[0]?.layers).toEqual(work.pages[0]?.layers);
+  });
 });
 
 describe("CANVAS_SIZES(将来のサイズ選択用の表・まだ未使用)", () => {
