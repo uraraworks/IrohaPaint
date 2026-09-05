@@ -17,10 +17,10 @@ import {
   CANVAS_SIZES,
   CANVAS_WIDTH,
   createWork,
-  defaultLayers,
   snapshotOf,
   type CanvasSizeId,
   type CellGrid,
+  type PageData,
   type SnapshotReason,
   type WorkRecord,
 } from "./core/model.ts";
@@ -2342,14 +2342,23 @@ class App {
   }
 
   /**
+   * 保存されたページ 1 枚を Surface へ描き戻す。
+   * レイヤーがあればそのまま組み直し、無い(壊れている)ときだけ合成結果 1 枚に落とす。
+   */
+  private async restorePage(page: PageData): Promise<void> {
+    if (page.layers.length > 0) await this.surface.restoreLayers(page.layers, page.activeLayerId);
+    else await this.surface.restoreFrom(page.image);
+  }
+
+  /**
    * 選んだ履歴の姿に戻す。戻す直前の姿も履歴に積むので、巻き戻し自体をやり直せる
    * (「戻したらもっとひどくなった」を作らない)。
    */
   private async revertTo(workId: string, snapshotId: string): Promise<void> {
     const work = await this.store.get(workId);
     const snapshot = work?.snapshots.find((item) => item.id === snapshotId);
-    const image = snapshot?.pages[0]?.image;
-    if (work === null || work === undefined || snapshot === undefined || image === undefined) return;
+    const page = snapshot?.pages[0];
+    if (work === null || work === undefined || snapshot === undefined || page === undefined) return;
 
     // 巻き戻す作品を開いていない場合は、まずそちらへ移る。
     if (this.work?.id !== workId) {
@@ -2362,7 +2371,7 @@ class App {
     await this.captureSnapshot("revert");
     // 履歴画像は work と同じ寸法で焼かれているので、work の寸法に揃えてから描き戻す。
     this.applyCanvasSize(work.canvasWidth, work.canvasHeight);
-    await this.surface.restoreFrom(image);
+    await this.restorePage(page);
     await this.save();
     this.persistProgress();
     this.syncHistoryButtons();
@@ -2377,11 +2386,11 @@ class App {
     }
     await this.save();
     const work = await this.store.get(id);
-    const image = work?.pages[0]?.image;
-    if (work === null || work === undefined || image === undefined) return;
+    const page = work?.pages[0];
+    if (work === null || work === undefined || page === undefined) return;
     // 開く作品の寸法に合わせてから描き戻す(いまは全作品 1748x1181 なので実質は保険)。
     this.applyCanvasSize(work.canvasWidth, work.canvasHeight);
-    await this.surface.restoreFrom(image);
+    await this.restorePage(page);
     this.work = work;
     this.applyWorkPaper();
     // 開いた作品はスマホ/タブレットに合わせた最初の見え方から始める。
@@ -2438,8 +2447,8 @@ class App {
         await this.store.put(this.work);
       } else {
         this.applyCanvasSize(next.canvasWidth, next.canvasHeight);
-        const image = next.pages[0]?.image;
-        if (image !== undefined) await this.surface.restoreFrom(image);
+        const page = next.pages[0];
+        if (page !== undefined) await this.restorePage(page);
         this.work = next;
       }
       this.applyWorkPaper();
@@ -2473,13 +2482,23 @@ class App {
     } else {
       const page = work.pages[0];
       const pageId = page?.id ?? "page-0";
+      // Surface が実際に持っているレイヤー構成をそのまま書く(image は従来通り合成結果)。
+      // 各レイヤーは透過のまま保存する(toLayerImages() 参照。紙色で塗ると復元時に
+      // 上のレイヤーが下を隠してしまう)。id は Surface 側のものをそのまま使うので、
+      // 保存のたびに別レイヤー扱いになることはない。
+      const layerImages = await this.surface.toLayerImages();
       work = {
         ...work,
         updatedAt: now,
-        // Surface がまだレイヤーを持たないので、いまは合成結果 1 枚をそのまま唯一の
-        // レイヤーとして書く。Surface がレイヤーを持つようになったらここで各レイヤーの
-        // PNG を書く(id は defaultLayers() 任せにせず、既存レイヤーの id を引き継ぐ形になる)。
-        pages: [{ id: pageId, image: png, deleted: page?.deleted ?? false, layers: defaultLayers(pageId, png) }],
+        pages: [
+          {
+            id: pageId,
+            image: png,
+            deleted: page?.deleted ?? false,
+            layers: layerImages.map((layer) => ({ ...layer, deleted: false })),
+            activeLayerId: this.surface.activeLayerId,
+          },
+        ],
         thumbnail,
       };
       // 「前に戻す」用の履歴。描いている間は数分おきに 1 件だけ積む(追記のみ)。
@@ -2503,10 +2522,10 @@ class App {
       // 前回ひらいていた絵の続きから。無ければいちばん新しい絵。
       const saved = this.currentWorkId === null ? null : await this.store.get(this.currentWorkId);
       const latest = saved !== null && !saved.deleted ? saved : (await this.store.list())[0];
-      const image = latest?.pages[0]?.image;
-      if (latest === undefined || image === undefined) return;
+      const page = latest?.pages[0];
+      if (latest === undefined || page === undefined) return;
       this.applyCanvasSize(latest.canvasWidth, latest.canvasHeight);
-      await this.surface.restoreFrom(image);
+      await this.restorePage(page);
       this.work = latest;
       this.applyWorkPaper();
       // 起動直後にもう一度、スマホ/タブレットに合わせた最初の見え方を揃える

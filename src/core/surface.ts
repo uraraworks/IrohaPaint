@@ -1160,6 +1160,30 @@ export class Surface {
 
   // --- 入出力 -----------------------------------------------------------
 
+  /**
+   * レイヤーごとの PNG を書き出す(保存用)。下から順。
+   *
+   * toPng() と違って紙の色は塗らない。レイヤーは重ねて初めて絵になるもので、
+   * 1 枚ごとに紙色で塗り潰すと上のレイヤーが下を隠してしまい、復元したときに
+   * 別の絵になってしまう(透過のまま保存して、表示側で重ねる)。
+   * アクティブな 1 枚だけは画素の実体が this.canvas 側にあるので、そこを読む。
+   */
+  async toLayerImages(): Promise<{ id: string; image: Blob; visible: boolean; opacity: number }[]> {
+    const results: { id: string; image: Blob; visible: boolean; opacity: number }[] = [];
+    for (let i = 0; i < this.layers.length; i += 1) {
+      const layer = this.layers[i] as LayerSlot;
+      const source = i === this.activeIndex ? this.canvas : layer.canvas;
+      const image = await new Promise<Blob>((resolve, reject) => {
+        source.toBlob((blob) => {
+          if (blob === null) reject(new Error("PNG の生成に失敗しました"));
+          else resolve(blob);
+        }, "image/png");
+      });
+      results.push({ id: layer.id, image, visible: layer.visible, opacity: layer.opacity });
+    }
+    return results;
+  }
+
   /** 透明部分を紙の色で埋めた PNG を作る(保存・書き出し用)。 */
   async toPng(): Promise<Blob> {
     const flat = document.createElement("canvas");
@@ -1258,6 +1282,79 @@ export class Surface {
     this.redoPatches = [];
     this.strokes.clear();
     this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
+  }
+
+  /**
+   * 保存済みのレイヤー構成を描き戻す(リロード復元)。
+   *
+   * collapseToSingleLayer() は使わない。あちらは「既存の 1 枚目を残して畳む」作法だが、
+   * ここでは保存されていた id をそのまま使ってスロットを作り直す必要があり、
+   * 残す 1 枚を選ぶという前提そのものが合わないため。
+   *
+   * layers が空(古い保存データ)のときは何もしない。呼び出し側(main.ts)が
+   * restoreFrom() で合成結果 1 枚に落とす前提。
+   */
+  async restoreLayers(
+    layers: readonly { id: string; image: Blob; visible: boolean; opacity: number; deleted: boolean }[],
+    activeId?: string,
+  ): Promise<void> {
+    if (layers.length === 0) return;
+
+    this.cancelStroke();
+    this.clearShapePreview();
+
+    // 既存のレイヤーは全部畳んで DOM からも外す。id ごと新しく作り直すので、
+    // 1 枚だけ残す collapseToSingleLayer() の作法には乗せない。
+    for (const layer of this.layers) layer.canvas.remove();
+    this.layers = [];
+
+    const parent = this.canvas.parentElement;
+    // ソフトデリート済みは画面に出さない。ただし全部 deleted だと 0 枚になってしまうので、
+    // その時だけ id を新規に振った空の 1 枚を残す(保存データに使える id が無いため)。
+    const alive = layers.filter((layer) => !layer.deleted);
+
+    const slots: LayerSlot[] = [];
+    if (alive.length === 0) {
+      const empty = this.createLayerSlot();
+      if (parent !== null) parent.appendChild(empty.canvas);
+      slots.push(empty);
+    } else {
+      for (const saved of alive) {
+        const slot = this.createLayerSlot();
+        slot.id = saved.id;
+        slot.visible = saved.visible;
+        slot.opacity = saved.opacity;
+        const bitmap = await createImageBitmap(saved.image);
+        try {
+          slot.ctx.clearRect(0, 0, this.width, this.height);
+          slot.ctx.drawImage(bitmap, 0, 0, this.width, this.height);
+        } finally {
+          bitmap.close();
+        }
+        if (parent !== null) parent.appendChild(slot.canvas);
+        slots.push(slot);
+      }
+    }
+    this.layers = slots;
+
+    // アクティブは保存されていた id を探す。見つからなければ一番上(末尾)を選ぶ
+    // (線画を上に置いている子が気付かないまま下へ描いてしまう事故を避ける)。
+    const foundIndex = activeId !== undefined ? this.layers.findIndex((layer) => layer.id === activeId) : -1;
+    this.activeIndex = foundIndex !== -1 ? foundIndex : this.layers.length - 1;
+
+    // アクティブに選んだ 1 枚は画素の実体を this.canvas 側に置く決まりなので、
+    // そのスロットの中身を this.canvas へ写す(紙の色は塗らない。透明のままが正しい)。
+    const active = this.layers[this.activeIndex] as LayerSlot;
+    this.ctx.clearRect(0, 0, this.width, this.height);
+    this.ctx.drawImage(active.canvas, 0, 0);
+    this.patches = [];
+    this.redoPatches = [];
+    active.patches = [];
+    active.redoPatches = [];
+    this.strokes.clear();
+
+    this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
+    this.restack();
   }
 }
 
