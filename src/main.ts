@@ -276,6 +276,11 @@ class App {
   /** 起動時に復元する作品 ID(復元後は this.work が正)。 */
   private currentWorkId: string | null = null;
   private saveTimer: number | null = null;
+  /**
+   * 最後に保存してからキャンバスの中身が変わったか。scheduleSave() が唯一の立て役。
+   * false の save() は何もしない(同じ絵の版を増やさないため。docs/page-versions.md)。
+   */
+  private dirty = false;
   private lastSnapshotAt = 0;
   /** 指ごとの、直前に受け取った生の座標(手ブレ補正前)。離した位置まで線を伸ばすのに使う。 */
   private readonly lastPoints = new Map<number, { x: number; y: number }>();
@@ -2552,6 +2557,9 @@ class App {
     // 履歴画像は work と同じ寸法で焼かれているので、work の寸法に揃えてから描き戻す。
     this.applyCanvasSize(work.canvasWidth, work.canvasHeight);
     await this.restorePage(page);
+    // 描き戻した控えの絵を今の姿として書くため。restorePage は scheduleSave を通らないので
+    // ここで立てないと save() が「変わっていない」と誤解して素通りしてしまう。
+    this.dirty = true;
     await this.save();
     this.persistProgress();
     this.syncHistoryButtons();
@@ -2648,11 +2656,17 @@ class App {
   // --- 保存 -------------------------------------------------------------
 
   private scheduleSave(): void {
+    this.dirty = true;
     if (this.saveTimer !== null) window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => void this.save(), AUTOSAVE_DELAY_MS);
   }
 
   private async save(): Promise<void> {
+    // 中身が変わっていない保存は何もしない(まだ作品が無い最初の保存だけは必ず焼く)。
+    if (this.work !== null && !this.dirty) return;
+    // 焼き始める前に倒しておく。焼いている間に描かれた分は scheduleSave() がまた
+    // 立ててくれるので、ここで倒しても取りこぼさない。
+    this.dirty = false;
     const png = await this.surface.toPng();
     const thumbnail = await this.surface.toThumbnail();
     const now = Date.now();
@@ -2696,6 +2710,8 @@ class App {
       await this.store.put(work);
     } catch (error) {
       // 保存に失敗しても描画は続けられるべきなので落とさない。
+      // 書き込めていないので、次の保存でやり直せるよう立て直す。
+      this.dirty = true;
       console.warn("じどうほぞんに しっぱいしました", error);
     }
   }
