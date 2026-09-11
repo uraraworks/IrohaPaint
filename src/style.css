@@ -450,8 +450,32 @@ body {
  * ツールバーの中(#f7f3ec の帯の上)ではなく紙の上に浮くので、浮いて見えるよう
  * .sound-toggle と同じ影を足す。
  */
-.onion-toggle {
+.onion-toggle,
+.playback-toggle {
   box-shadow: var(--shadow);
+}
+
+/*
+ * 「見る」(パラパラ再生)専用の canvas。underlay-layer/onion-layer と同じ実ピクセル・CSS の
+ * 扱い(main.ts が canvasWidth x canvasHeight で作り、ここで紙いっぱいへ伸ばす)。
+ * canvas.paper の直後(main.ts の insertBefore 参照)、紙テクスチャより下に置くので、
+ * 再生中も紙の質感(乗算)の見た目は変わらない。
+ * 再生していない間は隠す。is-on が付く=再生中の間だけ pointer-events を有効にし、
+ * 紙(canvas.paper)より手前でタップを受け止めて止める(main.ts stopPlayback 参照)。
+ */
+.playback-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  border-radius: 14px;
+  pointer-events: none;
+}
+
+.playback-layer.is-on {
+  display: block;
+  pointer-events: auto;
 }
 
 /*

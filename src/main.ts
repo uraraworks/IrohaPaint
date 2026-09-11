@@ -81,6 +81,7 @@ import {
   FULLSCREEN_SVG,
   MOVE_SVG,
   ONION_SVG,
+  PLAY_SVG,
   SOUND_OFF_SVG,
   SOUND_ON_SVG,
   withHiddenBadge,
@@ -148,6 +149,11 @@ const PAPER_CORNER_RADIUS = 14;
  */
 const ONION_OPACITY = 0.3;
 
+/** 「見る」で再生する速さ(docs/animation.md「見る」: 1秒に6コマ、固定)。 */
+const FLIPBOOK_FPS = 6;
+/** 1コマぶんの表示時間(ミリ秒)。FLIPBOOK_FPS から機械的に求める。 */
+const FLIPBOOK_FRAME_MS = 1000 / FLIPBOOK_FPS;
+
 /** 描き終わってから保存するまでの待ち時間。描画中に保存すると重い。 */
 const AUTOSAVE_DELAY_MS = 800;
 /** 履歴(まえにもどす)を積む間隔。 */
@@ -181,6 +187,12 @@ class App {
    */
   private readonly onionCanvas: HTMLCanvasElement;
   private readonly onionCtx: CanvasRenderingContext2D | null;
+  /**
+   * 「見る」(パラパラ再生)専用キャンバス。onionCanvas と同じく紙のキャンバスには一切描かない。
+   * 置き場所の理由・重なり順は buildStage(paperWrap.insertBefore 周り)のコメント参照。
+   */
+  private readonly playbackCanvas: HTMLCanvasElement;
+  private readonly playbackCtx: CanvasRenderingContext2D | null;
   /**
    * 置く操作中だけ出す、画面全体を覆う canvas。
    * 写真を紙の外まで(はみ出し込みで)画面座標で描き、ドラッグ・ピンチもここで拾う
@@ -404,6 +416,37 @@ class App {
    */
   private onionGeneration = 0;
 
+  /** 「見る」ボタン。押すたびに再生の開始/停止をトグルする。 */
+  private playbackButton: HTMLElement | null = null;
+  /** 再生中かどうか。docs/animation.md「見る」: 紙・もう一度押す・他の操作のどれでも止まる。 */
+  private playing = false;
+  /**
+   * 再生対象のコマの合成済み PNG(PageData.image)を、消えていないコマの並び順のまま
+   * 控えたもの。startPlayback() が save() 直後の pages から一度だけ作り、止めたら空にする。
+   * 原寸ビットマップ(1枚約8MB)ではなく Blob のまま持つ(まだデコードしていない=軽い)。
+   */
+  private playbackFrames: Blob[] = [];
+  /** 今表示しているコマの、playbackFrames 内での添字。 */
+  private playbackIndex = 0;
+  /**
+   * 読み終えた ImageBitmap を添字ごとに持つ(「今表示しているコマ」と「この先2コマ」の
+   * 最大3枚だけ。docs/animation.md「少しずつ読む」)。表示に要らなくなったら必ず close() して
+   * 手放す(1枚約8MB、全部持つと24コマで約200MBになり Safari が落ちる)。
+   */
+  private readonly playbackBitmaps = new Map<number, ImageBitmap>();
+  /** 今 createImageBitmap() を呼んでいる最中の添字(同じコマを二重に読みに行かない)。 */
+  private readonly playbackLoading = new Set<number>();
+  /**
+   * stopPlayback() のたびに +1 する世代カウンタ。非同期の読み込み(createImageBitmap)が
+   * 終わる前に止められたら、読み終えたビットマップをすぐ close() して捨てる
+   * (updateOnionLayer の onionGeneration と同じ考え方)。
+   */
+  private playbackGeneration = 0;
+  /** requestAnimationFrame の id。stopPlayback() で必ず cancel する。 */
+  private playbackRaf: number | null = null;
+  /** 次のコマへ進んでよい時刻(performance.now() と同じ時間軸)。 */
+  private playbackNextDueAt = 0;
+
   /**
    * 塗り方。既定は「かこみ」(色の境界まで)。
    *
@@ -465,6 +508,16 @@ class App {
     // 重ねると今のコマの線まで紙色に覆われて褪せる。乗算なら紙のほぼ白い色は影響せず、
     // 前のコマの線だけが薄く乗る)。
     this.onionCanvas.style.opacity = String(ONION_OPACITY);
+    // 「見る」の再生専用。onionCanvas と同じく placement 座標系を持たないので、
+    // 実ピクセルは canvasWidth x canvasHeight にして CSS で紙いっぱいへ伸ばす。
+    this.playbackCanvas = document.createElement("canvas");
+    this.playbackCanvas.className = "playback-layer";
+    this.playbackCanvas.width = this.canvasWidth;
+    this.playbackCanvas.height = this.canvasHeight;
+    this.playbackCtx = this.playbackCanvas.getContext("2d");
+    // 再生中だけ pointer-events を有効にする(style.css の .playback-layer.is-on)ので、
+    // 紙(canvas.paper)より手前でタップを受け止められる。押されたら止める。
+    this.playbackCanvas.addEventListener("pointerdown", () => this.stopPlayback());
     // 紙の質感の層。写真の下敷きと同じく実ピクセルを canvasWidth x canvasHeight で作り
     // CSS で紙と同じ大きさへ伸ばす。mix-blend-mode: multiply で重ねる(画面フィルタの
     // 「よる」と同じ仕組み)。
@@ -538,7 +591,12 @@ class App {
     this.applyCanvasSizeStyle();
     // 描いている最中の末尾を映す層(surface.ts の overlay)。方眼より下に敷く。
     this.paperWrap.insertBefore(this.surface.overlay, this.gridLayer);
-    // 重なり順: 紙 → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → うすく(前のコマ) → 方眼。
+    // 「見る」の再生 canvas。docs/animation.md「見る」のとおり canvas.paper の直後
+    // (描いた線より上)・紙テクスチャより下に置く(質感は乗算で上から効くので、再生中も
+    // 紙の見た目が変わらない)。再生中は描けない(pointer-events で紙より手前に立つ)ので、
+    // 仮インク(overlay)より前でも後でも見た目に影響しない。
+    this.paperWrap.insertBefore(this.playbackCanvas, this.surface.overlay);
+    // 重なり順: 紙 → 見る(再生) → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → うすく(前のコマ) → 方眼。
     // 方眼はマス目の目安なので常に一番上に見えていてほしい。紙の質感は絵そのものの一部と
     // いう位置づけで下敷き(写真)より下、仮インクより上に置く。
     // うすく(onionCanvas)は「今のコマの上に乗算で重ねる」ものなので、紙(paper)・仮インク
@@ -582,6 +640,11 @@ class App {
     // (回転で短辺が変わる、外部ディスプレイでウィンドウが伸び縮みする、等)。
     window.addEventListener("resize", () => this.applyInitialView());
     window.addEventListener("orientationchange", () => this.applyInitialView());
+    // 画面が裏に回ったら再生を止める(裏で requestAnimationFrame を回し続けない。
+    // docs/animation.md「見る」の止まる経路の1つ)。
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") this.stopPlayback();
+    });
     // ここまででレイアウトに要る要素は揃っているので、最初の見え方を決める。
     this.applyInitialView();
     // ここから先の applyView() だけを「動かした」とみなし、全体図の対象にする
@@ -695,6 +758,8 @@ class App {
     this.underlayCanvas.height = height;
     this.onionCanvas.width = width;
     this.onionCanvas.height = height;
+    this.playbackCanvas.width = width;
+    this.playbackCanvas.height = height;
     this.paperTextureCanvas.width = width;
     this.paperTextureCanvas.height = height;
     // 紙テクスチャは寸法込みで焼くので、寸法が変わったキャッシュは使い回せない。
@@ -935,6 +1000,9 @@ class App {
 
   /** 開いている作品(this.work)の paperKind を this.paperKind・表示へ反映する。 */
   private applyWorkPaper(): void {
+    // 作品が切り替わる経路はすべてここを通る(コメント参照)ので、再生中なら必ず止める
+    // (docs/animation.md「見る」止まる経路: 作品の切り替え)。
+    this.stopPlayback();
     this.paperKind = this.work?.paperKind ?? "plain";
     this.syncPaperLayer();
     // 作品が切り替わる経路(openWork/createWork/trashWork/revertTo/restore)は
@@ -1434,7 +1502,31 @@ class App {
     this.flipbookControls = document.createElement("div");
     this.flipbookControls.className = "flipbook-controls";
     this.stage.appendChild(this.flipbookControls);
+    // 「見る」を「うすく」の上に置く(docs/animation.md「見る」)。
+    // flex-direction: column の縦並びなので、先に足した方が上に来る。
+    this.buildPlaybackToggle();
     this.buildOnionToggle();
+  }
+
+  /**
+   * 「見る」ボタン。見た目は onionButton と同じ規格(.tool-button + 浮かせる影)。
+   * 押すたびに startPlayback() が開始/停止をトグルする。
+   */
+  private buildPlaybackToggle(): void {
+    const button = document.createElement("button");
+    button.className = "tool-button playback-toggle";
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.innerHTML = PLAY_SVG;
+    const label = document.createElement("span");
+    label.className = "label";
+    label.appendChild(renderRuby([{ base: "見", ruby: "み" }, { base: "る" }]));
+    button.append(icon, label);
+    button.setAttribute("aria-label", "みる");
+    button.setAttribute("aria-pressed", "false");
+    button.addEventListener("click", () => void this.startPlayback());
+    this.flipbookControls.appendChild(button);
+    this.playbackButton = button;
   }
 
   /**
@@ -1523,6 +1615,174 @@ class App {
       this.onionCtx.drawImage(bitmap, 0, 0, this.canvasWidth, this.canvasHeight);
     }
     this.onionCanvas.classList.add("is-on");
+  }
+
+  // --- 見る(パラパラ再生) ------------------------------------------------
+
+  /**
+   * 「見る」を始める。docs/animation.md「見る」の手順そのまま:
+   *  ①再生中ならトグルで止める → ②コマが2枚未満なら始めずガイド →
+   *  ③今描いた線も入るよう保存 → ④その時点の pages(deleted 除く)の image を控える →
+   *  ⑤1コマ目を読み終えてから表示を始める(空白を出さない) →
+   *  ⑥requestAnimationFrame で進める(playbackTick)。
+   */
+  private async startPlayback(): Promise<void> {
+    if (this.playing) {
+      this.stopPlayback(); // ①
+      return;
+    }
+    const work = this.work;
+    if (work === null || work.animation !== true) return; // 「見る」自体がパラパラの作品でしか出ない。
+    if (work.pages.filter((p) => !p.deleted).length < 2) {
+      // ② うすく・コマの帯と同じ「今のところ何も起きない」パターン。
+      if (this.playbackButton !== null) this.guide.show("コマを ふやすと うごくよ", this.playbackButton);
+      return;
+    }
+    await this.save(); // ③ 今描いた線も再生に入れる。
+    const saved = this.work;
+    if (saved === null) return; // 型のための保険。save() の間に作品が消えることは無い想定。
+    const frames = saved.pages.filter((p) => !p.deleted).map((p) => p.image); // ④
+    if (frames.length < 2) return; // 保険(save() の間に構成が変わることは無い想定)。
+
+    // ここから先の非同期読み込みが古い呼び出しの結果で上書きしないよう世代を進める。
+    const generation = ++this.playbackGeneration;
+    const firstBlob = frames[0];
+    if (firstBlob === undefined) return;
+    let firstBitmap: ImageBitmap;
+    try {
+      firstBitmap = await createImageBitmap(firstBlob); // ⑤
+    } catch (error) {
+      console.warn("さいせいの よみこみに しっぱいしました", error);
+      return;
+    }
+    if (generation !== this.playbackGeneration) {
+      // 読み込みの間にもう一度「見る」が押された/止められた等で世代がずれた。
+      firstBitmap.close();
+      return;
+    }
+
+    this.playbackFrames = frames;
+    this.playbackIndex = 0;
+    this.playbackBitmaps.set(0, firstBitmap);
+    this.playing = true;
+    this.enterPlaybackMode();
+    this.drawPlaybackFrame(firstBitmap);
+    this.ensurePlaybackWindow(generation); // この先2コマの先読みを始める。
+
+    this.playbackNextDueAt = performance.now() + FLIPBOOK_FRAME_MS;
+    this.playbackRaf = requestAnimationFrame((ts) => this.playbackTick(ts, generation)); // ⑥
+    this.sound.play("fanfare");
+  }
+
+  /**
+   * 「見る」を止める。docs/animation.md「見る」の止まる経路(紙を押す/もう一度押す/
+   * 他のツールボタン/コマの帯の操作/作品の切り替え・ギャラリー/画面が裏に回った)は
+   * すべてここを呼ぶ。read み込み中のものは世代番号(playbackGeneration)で捨てさせる。
+   */
+  private stopPlayback(): void {
+    if (!this.playing) return;
+    this.playing = false;
+    this.playbackGeneration++; // 進行中の非同期読み込みをすべて無効化する。
+    if (this.playbackRaf !== null) {
+      cancelAnimationFrame(this.playbackRaf);
+      this.playbackRaf = null;
+    }
+    for (const bitmap of this.playbackBitmaps.values()) bitmap.close();
+    this.playbackBitmaps.clear();
+    this.playbackLoading.clear();
+    this.playbackFrames = [];
+    this.playbackIndex = 0;
+    this.exitPlaybackMode();
+  }
+
+  /**
+   * 再生 canvas を出し、紙を押せなくし(pointer-events は style.css の .is-on 側)、
+   * 「うすく」を一時的に隠し(状態そのものは onionEnabled のまま変えない)、
+   * ボタンの見た目を選ばれている状態にする。
+   */
+  private enterPlaybackMode(): void {
+    this.playbackCanvas.classList.add("is-on");
+    this.onionCanvas.classList.remove("is-on");
+    this.playbackButton?.classList.add("is-active");
+    this.playbackButton?.setAttribute("aria-pressed", "true");
+  }
+
+  /** enterPlaybackMode() を巻き戻す。「うすく」は syncOnion() で元の状態に揃え直す。 */
+  private exitPlaybackMode(): void {
+    this.playbackCanvas.classList.remove("is-on");
+    this.playbackButton?.classList.remove("is-active");
+    this.playbackButton?.setAttribute("aria-pressed", "false");
+    this.syncOnion();
+  }
+
+  /**
+   * requestAnimationFrame のループ本体。playbackNextDueAt を過ぎていて、次のコマの
+   * ビットマップが既に読み終えていれば1コマ進める。間に合っていなければ、そのコマを
+   * 飛ばさず今の絵のまま待つ(docs/animation.md「少しずつ読む」)。
+   * generation が今の playbackGeneration と食い違っていたら(=止められた後の古い呼び出し)
+   * 何もせず終わる。
+   */
+  private playbackTick(timestamp: number, generation: number): void {
+    if (!this.playing || generation !== this.playbackGeneration) return;
+    if (timestamp >= this.playbackNextDueAt) {
+      const length = this.playbackFrames.length;
+      const targetIndex = (this.playbackIndex + 1) % length;
+      const bitmap = this.playbackBitmaps.get(targetIndex);
+      if (bitmap !== undefined) {
+        this.drawPlaybackFrame(bitmap);
+        this.playbackIndex = targetIndex;
+        this.playbackNextDueAt = timestamp + FLIPBOOK_FRAME_MS;
+        this.ensurePlaybackWindow(generation);
+      }
+      // bitmap が undefined ならまだ読み終えていない = 今の絵のまま待つ。
+      // playbackNextDueAt は動かさないので、次の tick でも読み終わっていればすぐ進む。
+    }
+    this.playbackRaf = requestAnimationFrame((ts) => this.playbackTick(ts, generation));
+  }
+
+  /** 今のコマ・この先2コマ(最大3枚)だけをメモリに持つよう、足りない分を読み・要らない分を閉じる。 */
+  private ensurePlaybackWindow(generation: number): void {
+    const length = this.playbackFrames.length;
+    if (length === 0) return;
+    const wanted = new Set<number>([0, 1, 2].map((offset) => (this.playbackIndex + offset) % length));
+    // 窓の外に出たビットマップはすぐ手放す(1枚約8MBなので溜めない)。
+    for (const [index, bitmap] of this.playbackBitmaps) {
+      if (!wanted.has(index)) {
+        bitmap.close();
+        this.playbackBitmaps.delete(index);
+      }
+    }
+    for (const index of wanted) {
+      if (this.playbackBitmaps.has(index) || this.playbackLoading.has(index)) continue;
+      void this.loadPlaybackBitmap(generation, index, wanted);
+    }
+  }
+
+  /** ensurePlaybackWindow() から呼ぶ、1コマぶんの先読み。 */
+  private async loadPlaybackBitmap(generation: number, index: number, wanted: ReadonlySet<number>): Promise<void> {
+    const blob = this.playbackFrames[index];
+    if (blob === undefined) return;
+    this.playbackLoading.add(index);
+    try {
+      const bitmap = await createImageBitmap(blob);
+      if (generation !== this.playbackGeneration || !wanted.has(index)) {
+        // 読み込みの間に止められた、またはもう窓の外(先へ進んだ)になった。
+        bitmap.close();
+        return;
+      }
+      this.playbackBitmaps.set(index, bitmap);
+    } catch (error) {
+      console.warn("さいせいの よみこみに しっぱいしました", error);
+    } finally {
+      this.playbackLoading.delete(index);
+    }
+  }
+
+  /** playbackCanvas に1コマ分描く。 */
+  private drawPlaybackFrame(bitmap: ImageBitmap): void {
+    if (this.playbackCtx === null) return;
+    this.playbackCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+    this.playbackCtx.drawImage(bitmap, 0, 0, this.canvasWidth, this.canvasHeight);
   }
 
   /**
@@ -1639,6 +1899,9 @@ class App {
   // --- 操作 -------------------------------------------------------------
 
   private onToolButton(id: ToolId, button: HTMLElement): void {
+    // 「見る」ボタン自体はここを通らない(別ハンドラ)が、他の道具ボタンはどれを押しても
+    // 再生を止める(docs/animation.md「見る」止まる経路)。
+    this.stopPlayback();
     this.sound.unlock();
     this.guide.hide();
     // これから開くもの以外は閉じる。開きっぱなしだとパネル同士が重なり、
@@ -2883,6 +3146,8 @@ class App {
    * 今の絵(切り替え元のもの)が切り替え先のコマへ焼かれてしまう。
    */
   private async selectFrame(id: string): Promise<void> {
+    // コマの帯の操作はどれも再生を止める(docs/animation.md「見る」止まる経路)。
+    this.stopPlayback();
     if (this.frameBusy) return;
     if (this.work === null) return;
     if (currentPageOf(this.work)?.id === id) return; // 今のコマの再タップは何もしない。
@@ -2915,6 +3180,8 @@ class App {
    * dirty も立てないまま store.put(setPaperKind と同じ作法)。
    */
   private async addFrame(): Promise<void> {
+    // コマの帯の操作はどれも再生を止める(docs/animation.md「見る」止まる経路)。
+    this.stopPlayback();
     if (this.frameBusy) return;
     if (this.work === null) return;
     // 上限チェックは frameBusy を立てる前に行う(押せるまま、の約束。
@@ -2967,6 +3234,8 @@ class App {
    * 一覧の札と同じ描き方(drawFramePageThumbnail、PageData.image から作る)。
    */
   private confirmRemoveFrame(id: string): void {
+    // 「けす」を押した時点で止める(確かめの間、裏で再生し続けない)。
+    this.stopPlayback();
     const work = this.work;
     if (work === null) return;
     const { width, height } = this.layerThumbnailSize();
@@ -3041,6 +3310,8 @@ class App {
    * pages の並びだけを直接書き換える)。
    */
   private async reorderFrame(id: string, toIndex: number): Promise<void> {
+    // コマの帯の操作はどれも再生を止める(docs/animation.md「見る」止まる経路)。
+    this.stopPlayback();
     if (this.frameBusy) return;
     if (this.work === null) return;
     this.frameBusy = true;
@@ -3173,6 +3444,8 @@ class App {
   // --- 作品カタログ -----------------------------------------------------
 
   private async openGallery(): Promise<void> {
+    // ギャラリーを開くのも止まる経路の1つ(docs/animation.md「見る」)。
+    this.stopPlayback();
     // 開く前に今の絵を確定させる。一覧に「さっきまで描いていた絵」が出ないと混乱する。
     await this.save();
     await this.refreshGallery();

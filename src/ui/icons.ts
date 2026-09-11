@@ -54,6 +54,14 @@ export const ONION_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
   <path d="M10.5 16q2-3 4-1t4-1" fill="none" stroke="#4aa3df" stroke-width="2" stroke-linecap="round"/>
 </svg>`;
 
+/**
+ * 「見る」(パラパラ再生)。再生の記号として広く使われる三角形をクレヨン色で塗る
+ * (docs/animation.md「見る」)。角は他のアイコン同様に丸める。
+ */
+export const PLAY_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
+  <path d="M10 7l16 9-16 9z" fill="#8cc152" stroke="#3d3730" stroke-width="2" stroke-linejoin="round"/>
+</svg>`;
+
 /** 履歴(前に戻す)。時計に反時計回りの矢印。 */
 export const HISTORY_SVG = `<svg viewBox="0 0 32 32" aria-hidden="true">
   <circle cx="17" cy="17" r="10" fill="#f3c64b" stroke="#3d3730" stroke-width="2"/>
