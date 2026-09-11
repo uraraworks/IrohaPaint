@@ -131,12 +131,13 @@ function promisify<T>(request: IDBRequest<T>): Promise<T> {
 /**
  * バージョン不一致・壊れたレコードは無視する(復元に失敗しても起動はする)。
  *
- * canvasWidth/canvasHeight・pages[].deleted・paperKind・pages[].layers は後から足した
- * フィールドなので、古い保存データには入っていない。SCHEMA_VERSION を上げて古い作品ごと
+ * canvasWidth/canvasHeight・pages[].deleted・paperKind・pages[].layers・animation は後から
+ * 足したフィールドなので、古い保存データには入っていない。SCHEMA_VERSION を上げて古い作品ごと
  * 捨てるようなことは絶対にしない(子どもの絵なので)。代わりにここで欠けている分だけ
  * 補う。今ある保存データは全部 CANVAS_WIDTH x CANVAS_HEIGHT・"plain" で描かれたものなので、
  * その値で補って正しい。deleted も未指定なら「消していない」で正しい。
  * paperKind は不正な値(壊れたデータ・型が合わないもの)でも "plain" に落とす。
+ * animation は boolean でなければ false(パラパラでない)に落とす。
  * layers が無い・配列でない・空の場合は defaultLayers() で「合成結果(page.image)を
  * 唯一のレイヤーとする」形に補う。安定 id(ページ id から作る)なので、何度読み込んでも
  * 同じ id になる。
@@ -155,6 +156,8 @@ export function unwrap(raw: unknown): WorkRecord | null {
     canvasWidth: work.canvasWidth ?? CANVAS_WIDTH,
     canvasHeight: work.canvasHeight ?? CANVAS_HEIGHT,
     paperKind: isPaperKind(work.paperKind) ? work.paperKind : "plain",
+    // パラパラより前に保存されたデータには animation が無い。false(パラパラでない)を補う。
+    animation: typeof work.animation === "boolean" ? work.animation : false,
     pages: work.pages.map((page: PageData) => ({
       ...page,
       deleted: page.deleted ?? false,
@@ -192,6 +195,9 @@ function readStoredWork(raw: unknown): StoredWork | null {
     canvasWidth: work.canvasWidth ?? CANVAS_WIDTH,
     canvasHeight: work.canvasHeight ?? CANVAS_HEIGHT,
     paperKind: isPaperKind(work.paperKind) ? work.paperKind : "plain",
+    // 封筒 2 を書き始めた時点ではまだ animation は欠けていないはずだが、
+    // unwrap() と同じ作法で欠けを補っておく。
+    animation: typeof work.animation === "boolean" ? work.animation : false,
   } as StoredWork;
 }
 

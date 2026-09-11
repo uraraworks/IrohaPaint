@@ -238,6 +238,19 @@ export interface WorkRecord {
   /** 現在の中身。Phase 0 は常に 1 ページ。 */
   pages: PageData[];
   /**
+   * パラパラ(アニメ)の作品か。docs/animation.md 参照。
+   * 古い保存データには無いフィールド。workStore.ts の unwrap() で読むときに、
+   * 欠けていたら false を補う(canvasWidth/canvasHeight と同じ作法。
+   * 今ある保存データは全部パラパラより前に作られたものなので、補って正しい)。
+   */
+  animation: boolean;
+  /**
+   * 最後に開いていたコマ(PageData.id)。パラパラの作品でだけ意味を持つ。
+   * 古い保存データには無いので任意フィールド。無い・見つからなければ 1 コマ目を開く
+   * (activeLayerId と同じ作法)。
+   */
+  activePageId?: string;
+  /**
    * 一覧表示用の小さい PNG。
    * 一覧で原寸(1748x1181)を並べると読み込みだけで数十 MB 動くので、
    * 保存のたびにサムネイルも一緒に作って持っておく。
@@ -331,6 +344,7 @@ export function createWork(
     canvasWidth,
     canvasHeight,
     paperKind,
+    animation: false,
     ...(thumbnail === undefined ? {} : { thumbnail }),
     pages: [
       { id: pageId, image, deleted: false, layers: defaultLayers(pageId, image), versionId: createId("ver") },

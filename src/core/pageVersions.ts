@@ -54,6 +54,8 @@ export interface StoredWork {
   pages: StoredPageRef[];
   thumbnail?: Blob;
   snapshots: StoredSnapshot[];
+  animation: boolean;
+  activePageId?: string;
 }
 
 function pageToRef(page: PageData): StoredPageRef {
@@ -101,6 +103,8 @@ export function splitWork(work: WorkRecord, now: number): { stored: StoredWork; 
     paperKind: work.paperKind,
     pages: work.pages.map(pageToRef),
     ...(work.thumbnail === undefined ? {} : { thumbnail: work.thumbnail }),
+    animation: work.animation,
+    ...(work.activePageId === undefined ? {} : { activePageId: work.activePageId }),
     snapshots: work.snapshots.map((snapshot) => ({
       id: snapshot.id,
       createdAt: snapshot.createdAt,
@@ -178,6 +182,10 @@ export function joinWork(stored: StoredWork, versions: ReadonlyMap<string, PageV
     paperKind: stored.paperKind,
     pages,
     ...(stored.thumbnail === undefined ? {} : { thumbnail: stored.thumbnail }),
+    animation: stored.animation,
+    // pages が控えから補われた場合でも activePageId はそのまま渡す。
+    // 「見つからなければ 1 コマ目」の判断は使う側(main.ts)の仕事にする。
+    ...(stored.activePageId === undefined ? {} : { activePageId: stored.activePageId }),
     snapshots,
   };
 }

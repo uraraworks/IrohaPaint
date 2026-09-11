@@ -44,6 +44,12 @@ describe("作品データモデル", () => {
     expect(work.paperKind).toBe("plain");
   });
 
+  it("新規作品はパラパラ(アニメ)でない状態で始まる", () => {
+    const work = createWork(dummy, 1000);
+    expect(work.animation).toBe(false);
+    expect(work.activePageId).toBeUndefined();
+  });
+
   it("新規ページは deleted:false で始まる", () => {
     const work = createWork(dummy, 1000);
     expect(work.pages[0]?.deleted).toBe(false);
@@ -243,6 +249,33 @@ describe("workStore の unwrap(古い保存データの読み込み)", () => {
 
     expect(restored?.pages[0]?.layers).toEqual(work.pages[0]?.layers);
   });
+
+  it("animation の無い古い形のデータは false(パラパラでない)で読み込む", () => {
+    // 公開前に保存された形を模す(animation 無し)。
+    const legacyWork = {
+      id: "work-legacy",
+      createdAt: 1,
+      updatedAt: 1,
+      markId: null,
+      deleted: false,
+      pages: [{ id: "page-legacy", image: dummy }],
+      snapshots: [],
+    } as unknown as WorkRecord;
+    const envelope: StoredEnvelope = { version: SCHEMA_VERSION, work: legacyWork };
+
+    const restored = unwrap(envelope);
+
+    expect(restored?.animation).toBe(false);
+  });
+
+  it("createWork() で作った新しい形のデータは animation:false のまま保たれる", () => {
+    const work = createWork(dummy, 1000);
+    const envelope: StoredEnvelope = { version: SCHEMA_VERSION, work };
+
+    const restored = unwrap(envelope);
+
+    expect(restored?.animation).toBe(false);
+  });
 });
 
 describe("workStore の readRow(封筒の振り分け)", () => {
@@ -282,6 +315,18 @@ describe("workStore の readRow(封筒の振り分け)", () => {
       expect(row.stored.paperKind).toBe("plain");
       expect(row.stored.id).toBe(stored.id);
     }
+  });
+
+  it("封筒 2 で animation の無い古いデータは false(パラパラでない)で読む", () => {
+    const work = createWork(dummy, 1000);
+    const { stored } = splitWork(work, 2000);
+    const legacyStored = { ...stored, animation: undefined };
+    const envelope = { version: ENVELOPE_VERSION, work: legacyStored };
+
+    const row = readRow(envelope);
+
+    expect(row?.kind).toBe("stored");
+    if (row?.kind === "stored") expect(row.stored.animation).toBe(false);
   });
 
   it("壊れた封筒 2(pages が配列でない・versionId が無い)は null", () => {

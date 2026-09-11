@@ -41,6 +41,36 @@ describe("splitWork / joinWork の往復", () => {
     expect(restored).toEqual(withHistory);
   });
 
+  it("animation と activePageId を往復で保つ(活動中のコマ ID 込み)", () => {
+    const work = createWork(blob(), 1000);
+    const activePage = page(blob());
+    const withAnimation: WorkRecord = {
+      ...work,
+      pages: [activePage],
+      animation: true,
+      activePageId: activePage.id,
+    };
+
+    const { stored, versions } = splitWork(withAnimation, 3000);
+    const restored = joinWork(stored, versionsMap(versions));
+
+    expect(restored).toEqual(withAnimation);
+  });
+
+  it("activePageId が無い作品は往復しても無いまま(false のときは省かれる)", () => {
+    const work = createWork(blob(), 1000);
+
+    const { stored, versions } = splitWork(work, 3000);
+
+    expect(stored.activePageId).toBeUndefined();
+    expect(stored.animation).toBe(false);
+
+    const restored = joinWork(stored, versionsMap(versions));
+
+    expect(restored?.activePageId).toBeUndefined();
+    expect(restored?.animation).toBe(false);
+  });
+
   it("今のページと控えが同じ版を指していれば、版の一覧では重複排除される", () => {
     const shared = page(blob());
     const work: WorkRecord = { ...createWork(blob(), 1000), pages: [shared] };
