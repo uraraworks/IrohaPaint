@@ -12,8 +12,9 @@ import {
   thinSnapshots,
   type WorkSnapshot,
 } from "../src/core/model.ts";
-import { MemoryWorkStore, unwrap, type StoredEnvelope } from "../src/core/workStore.ts";
+import { MemoryWorkStore, readRow, unwrap, type StoredEnvelope } from "../src/core/workStore.ts";
 import { SCHEMA_VERSION, type WorkRecord } from "../src/core/model.ts";
+import { ENVELOPE_VERSION, splitWork } from "../src/core/pageVersions.ts";
 
 const dummy = { size: 1 } as unknown as Blob;
 
@@ -241,6 +242,61 @@ describe("workStore の unwrap(古い保存データの読み込み)", () => {
     const restored = unwrap(envelope);
 
     expect(restored?.pages[0]?.layers).toEqual(work.pages[0]?.layers);
+  });
+});
+
+describe("workStore の readRow(封筒の振り分け)", () => {
+  it("封筒 1(丸ごと形)は legacy として読み、versionId が振られる", () => {
+    const legacyWork = {
+      id: "work-legacy",
+      createdAt: 1,
+      updatedAt: 1,
+      markId: null,
+      deleted: false,
+      pages: [{ id: "page-legacy", image: dummy }],
+      snapshots: [],
+    } as unknown as WorkRecord;
+    const envelope: StoredEnvelope = { version: SCHEMA_VERSION, work: legacyWork };
+
+    const row = readRow(envelope);
+
+    expect(row?.kind).toBe("legacy");
+    if (row?.kind === "legacy") {
+      expect(row.work.pages[0]?.versionId).toEqual(expect.any(String));
+    }
+  });
+
+  it("封筒 2(版は別の箱)は stored として読み、欠けた寸法・paperKind を補う", () => {
+    const work = createWork(dummy, 1000);
+    const { stored } = splitWork(work, 2000);
+    // 公開前に保存された形を模す(canvasWidth/canvasHeight・paperKind 無し)。
+    const legacyStored = { ...stored, canvasWidth: undefined, canvasHeight: undefined, paperKind: undefined };
+    const envelope = { version: ENVELOPE_VERSION, work: legacyStored };
+
+    const row = readRow(envelope);
+
+    expect(row?.kind).toBe("stored");
+    if (row?.kind === "stored") {
+      expect(row.stored.canvasWidth).toBe(CANVAS_WIDTH);
+      expect(row.stored.canvasHeight).toBe(CANVAS_HEIGHT);
+      expect(row.stored.paperKind).toBe("plain");
+      expect(row.stored.id).toBe(stored.id);
+    }
+  });
+
+  it("壊れた封筒 2(pages が配列でない・versionId が無い)は null", () => {
+    const work = createWork(dummy, 1000);
+    const { stored } = splitWork(work, 2000);
+
+    expect(readRow({ version: ENVELOPE_VERSION, work: { ...stored, pages: "not-an-array" } })).toBeNull();
+    expect(
+      readRow({ version: ENVELOPE_VERSION, work: { ...stored, pages: [{ id: "p1", deleted: false }] } }),
+    ).toBeNull();
+  });
+
+  it("未知の version は null(封筒 1 でも封筒 2 でもないので読まない)", () => {
+    const work = createWork(dummy, 1000);
+    expect(readRow({ version: 99, work })).toBeNull();
   });
 });
 
