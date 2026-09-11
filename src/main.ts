@@ -355,12 +355,30 @@ class App {
   /** コマの帯の切り替え・追加が二重に走らないようにするガード(連打・非同期処理中の再入防止)。 */
   private frameBusy = false;
   /**
-   * 「今のコマ以外」の札の絵(PageData.image から作る ImageBitmap)のキャッシュ。
-   * versionId をキーにする(中身が変わったら必ず別 versionId になる規則、docs/page-versions.md)
-   * ので、キーが同じなら描き直さなくてよい。作品が切り替わったら(applyWorkPaper())
-   * 中身をすべて close() して捨てる(古い作品の画像を握ったままにしない)。
+   * 「今のコマ以外」の札の絵のキャッシュ。versionId をキーにする(中身が変わったら必ず
+   * 別 versionId になる規則、docs/page-versions.md)ので、キーが同じなら描き直さなくてよい。
+   *
+   * 持つのは原寸の ImageBitmap ではなく、札の大きさ(layerThumbnailSize())へ一度だけ
+   * 縮めた小さい canvas。原寸は 1748x1181 の PNG で 1 枚あたり約8MB あり、コマは24まで
+   * 増えるので、原寸のまま全コマぶん持つと約200MBになり iPhone/古い iPad の Safari では
+   * タブごと落ちかねない(実測ではなく寸法からの見積もり)。縮めたら原寸はすぐ close() して
+   * 手放す(drawFramePageThumbnail 参照)。作品が切り替わったら(applyWorkPaper())
+   * 中身をすべて捨てる(古い作品の画像を握ったままにしない)。
    */
-  private readonly frameThumbCache = new Map<string, ImageBitmap>();
+  private readonly frameThumbCache = new Map<string, HTMLCanvasElement>();
+  /**
+   * frameThumbCache の中身を作ったときの layerThumbnailSize()。devicePixelRatio の変化等で
+   * 途中でサイズが変わると、キャッシュ済みの小さい canvas がもう的の大きさに合わないので、
+   * drawFramePageThumbnail が呼ばれるたびに今のサイズと比べ、違っていたら丸ごと作り直す。
+   */
+  private frameThumbCacheSize: { width: number; height: number } | null = null;
+  /**
+   * 「うすく」用、前のコマ1つぶんの原寸 ImageBitmap(1748x1181、約8MB)。
+   * 札の絵は縮めた小さい canvas で足りるが、うすくは今の紙とそのまま重ねるので原寸が要る。
+   * 「直前の1コマ」しか要らないため、versionId が変わったら古い方を close() してから
+   * 入れ替える(frameThumbCache のように何枚も溜めない)。
+   */
+  private onionBitmapCache: { versionId: string; bitmap: ImageBitmap } | null = null;
   /**
    * パラパラを始める前、かさねが 2 枚以上あるときだけ出す「まとめるよ」の確かめ。
    * removeLayerConfirm と見た目・閉じ方は同じだが、消すかさねの id ではなく
@@ -932,10 +950,21 @@ class App {
     this.syncOnion();
   }
 
-  /** frameThumbCache の中身をすべて閉じて空にする(古い作品の画像を握ったままにしない)。 */
+  /**
+   * frameThumbCache(小さい canvas)と onionBitmapCache(原寸 ImageBitmap 1枚)を空にする
+   * (古い作品の画像を握ったままにしない)。小さい canvas は close() を持たないので参照を
+   * 外すだけでよい(GC 任せ)。原寸ビットマップは close() で明示的に手放す。
+   */
   private clearFrameThumbCache(): void {
-    for (const bitmap of this.frameThumbCache.values()) bitmap.close();
     this.frameThumbCache.clear();
+    this.frameThumbCacheSize = null;
+    this.clearOnionBitmapCache();
+  }
+
+  /** onionBitmapCache が握っている原寸 ImageBitmap(約8MB)を close() して手放す。 */
+  private clearOnionBitmapCache(): void {
+    this.onionBitmapCache?.bitmap.close();
+    this.onionBitmapCache = null;
   }
 
   /**
@@ -1450,7 +1479,8 @@ class App {
    * onionCanvas に「今のコマの直前のコマ」の絵(PageData.image、合成済み PNG)を描く。
    * 1 コマ目・パラパラでない作品・スイッチ OFF のときは隠す。
    *
-   * コマの帯(drawFramePageThumbnail)と同じ frameThumbCache(versionId キー)を使い回す。
+   * コマの帯とは別に onionBitmapCache(原寸 ImageBitmap 1枚だけ)を持つ(frameThumbCache は
+   * 札の大きさへ縮めた小さい canvas しか持たないため、原寸が要るここでは使い回せない)。
    * createImageBitmap は非同期なので、読み終わる前にコマ・作品が切り替わっていたら
    * (onionGeneration がずれていたら)描かずに捨てる。
    */
@@ -1459,6 +1489,9 @@ class App {
     const work = this.work;
     if (work?.animation !== true || !this.onionEnabled) {
       this.onionCanvas.classList.remove("is-on");
+      // スイッチを切った/パラパラでない作品に移ったら、原寸ビットマップ(約8MB)も
+      // すぐ手放す。使っていない間まで持ち続ける理由が無い。
+      this.clearOnionBitmapCache();
       return;
     }
     const pages = work.pages.filter((page) => !page.deleted);
@@ -1467,14 +1500,23 @@ class App {
     if (prevPage === undefined) {
       // 1コマ目(またはコマが見つからない異常時)は前のコマが無いので隠す。
       this.onionCanvas.classList.remove("is-on");
+      this.clearOnionBitmapCache();
       return;
     }
-    const cached = this.frameThumbCache.get(prevPage.versionId);
-    const bitmap = cached ?? (await createImageBitmap(prevPage.image));
-    if (cached === undefined) {
+    let bitmap: ImageBitmap;
+    if (this.onionBitmapCache?.versionId === prevPage.versionId) {
+      bitmap = this.onionBitmapCache.bitmap;
+    } else {
+      const loaded = await createImageBitmap(prevPage.image);
       // 読み込みの間にコマ・作品が切り替わっていたら、この結果はもう要らない。
-      if (generation !== this.onionGeneration) return;
-      this.frameThumbCache.set(prevPage.versionId, bitmap);
+      if (generation !== this.onionGeneration) {
+        loaded.close();
+        return;
+      }
+      // 「直前の1コマ」だけを持つ約束(1枚約8MB)なので、入れ替える前に古い方を閉じる。
+      this.onionBitmapCache?.bitmap.close();
+      this.onionBitmapCache = { versionId: prevPage.versionId, bitmap: loaded };
+      bitmap = loaded;
     }
     if (this.onionCtx !== null) {
       this.onionCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
@@ -2650,6 +2692,12 @@ class App {
     const work = this.work;
     if (work === null) return;
     const pages = work.pages.filter((page) => !page.deleted);
+    // 消したコマ・古い版(保存のたびに versionId が変わる、docs/page-versions.md)の
+    // 小さい絵をキャッシュに残さない。切り替えを繰り返しても溜まり続けないようにする掃除。
+    const liveVersionIds = new Set(pages.map((page) => page.versionId));
+    for (const versionId of this.frameThumbCache.keys()) {
+      if (!liveVersionIds.has(versionId)) this.frameThumbCache.delete(versionId);
+    }
     const activeId = currentPageOf(work)?.id;
     const items: LayerStripItem[] = pages.map((page) => ({
       id: page.id,
@@ -2677,27 +2725,49 @@ class App {
   }
 
   /**
-   * 「今のコマ以外」の札 1 枚ぶんの絵を描く。PageData.image(PNG Blob)を
-   * createImageBitmap で読んでから Surface.drawImageThumbnail() で縮小する。
-   * 読み込みは非同期なので、呼んだ時点ではまだ描けない。frameThumbCache に
-   * versionId でキャッシュし、無ければ読み終わった後にその canvas がまだ DOM に
-   * あれば描く(sync() が札を作り直していたら古い canvas なので描かない)。
+   * 「今のコマ以外」の札 1 枚ぶんの絵を描く。PageData.image(PNG Blob、1748x1181で
+   * 1枚約8MB)を createImageBitmap で読んでから Surface.drawImageThumbnail() で
+   * 札の大きさ(layerThumbnailSize())へ縮める。読み込みは非同期なので、呼んだ時点では
+   * まだ描けない。
+   *
+   * 原寸の ImageBitmap はキャッシュせず、縮めた小さい canvas だけを frameThumbCache に
+   * versionId でキャッシュする(原寸のまま24コマぶん持つと約200MBになり、iPhone/古い iPad
+   * の Safari ではタブごと落ちかねないため)。縮め終わったら原寸はすぐ close() して手放す。
+   * キャッシュ済みなら、その小さい canvas をそのまま drawImage で写すだけでよい
+   * (的の大きさは layerThumbnailSize() で揃えてあるので、改めて縮小し直す必要が無い)。
+   *
    * コマの帯(syncFrameStrip)だけでなく、けすの確かめ(confirmRemoveFrame)からも呼ぶので、
    * 帯が閉じているかどうかは見ない(canvas.isConnected だけで十分。確かめの canvas は
    * 帯とは別の DOM に常時ある)。
    */
   private drawFramePageThumbnail(page: PageData, canvas: HTMLCanvasElement): void {
+    const size = this.layerThumbnailSize();
+    // devicePixelRatio の変化等で札の大きさ自体が変わっていたら、古い大きさの小さい
+    // canvas はもう的に合わないので丸ごと作り直す。
+    if (
+      this.frameThumbCacheSize === null ||
+      this.frameThumbCacheSize.width !== size.width ||
+      this.frameThumbCacheSize.height !== size.height
+    ) {
+      this.frameThumbCache.clear();
+      this.frameThumbCacheSize = size;
+    }
     const cached = this.frameThumbCache.get(page.versionId);
     if (cached !== undefined) {
-      this.surface.drawImageThumbnail(cached, canvas);
+      canvas.getContext("2d")?.drawImage(cached, 0, 0);
       return;
     }
     void createImageBitmap(page.image).then((bitmap) => {
-      this.frameThumbCache.set(page.versionId, bitmap);
+      const small = document.createElement("canvas");
+      small.width = size.width;
+      small.height = size.height;
+      this.surface.drawImageThumbnail(bitmap, small);
+      bitmap.close(); // 縮め終わったら原寸(約8MB)はすぐ手放す。
+      this.frameThumbCache.set(page.versionId, small);
       // 読み終わる頃には作品が切り替わっている/この canvas が差し替えられていることがある。
       // まだ画面に居る canvas にだけ描く。
       if (!canvas.isConnected) return;
-      this.surface.drawImageThumbnail(bitmap, canvas);
+      canvas.getContext("2d")?.drawImage(small, 0, 0);
     });
   }
 
