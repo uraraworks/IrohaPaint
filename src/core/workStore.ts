@@ -10,6 +10,7 @@ import {
   type WorkRecord,
 } from "./model.ts";
 import { isPaperKind } from "./paper.ts";
+import { assignLegacyVersionIds } from "./pageVersions.ts";
 
 export interface StoredEnvelope {
   version: number;
@@ -110,7 +111,7 @@ export function unwrap(raw: unknown): WorkRecord | null {
   const work = envelope.work;
   if (work === undefined || work === null) return null;
   if (typeof work.id !== "string" || !Array.isArray(work.pages)) return null;
-  return {
+  const completed: WorkRecord = {
     ...work,
     canvasWidth: work.canvasWidth ?? CANVAS_WIDTH,
     canvasHeight: work.canvasHeight ?? CANVAS_HEIGHT,
@@ -121,6 +122,9 @@ export function unwrap(raw: unknown): WorkRecord | null {
       layers: Array.isArray(page.layers) && page.layers.length > 0 ? page.layers : defaultLayers(page.id, page.image),
     })),
   };
+  // 封筒 1(この関数が読む唯一の形)は読むたびに versionId を振り直す
+  // (docs/page-versions.md「版 ID の規則」参照。封筒 2 の読み込みは手順 2 で扱う)。
+  return assignLegacyVersionIds(completed);
 }
 
 export class IndexedDbWorkStore implements WorkStore {

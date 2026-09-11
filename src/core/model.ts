@@ -108,7 +108,12 @@ export function cellGridFor(
 export const BEAD_GRID: CellGrid = createCellGrid(BEAD_COLS, BEAD_ROWS, true, CANVAS_WIDTH, CANVAS_HEIGHT);
 export const DOT_GRID: CellGrid = createCellGrid(DOT_COLS, DOT_ROWS, false, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-/** スキーマ変更時に上げる。読み込み時に不一致なら復元しない(壊れたデータで起動しない)。 */
+/**
+ * スキーマ変更時に上げる。読み込み時に不一致なら復元しない(壊れたデータで起動しない)。
+ * 保存の封筒(StoredEnvelope.version)の値としても使う。=1 は「封筒 1」=作品を
+ * 丸ごと 1 レコードに入れる古い形を指す。版を別の箱に置く新しい形(封筒 2)は
+ * src/core/pageVersions.ts の ENVELOPE_VERSION(docs/page-versions.md 参照)。
+ */
 export const SCHEMA_VERSION = 1;
 
 /**
@@ -173,6 +178,10 @@ export interface PageData {
    * (下を選ぶと、線画を上に置いている子が気付かないまま下へ描いてしまう)。
    */
   activeLayerId?: string;
+  /**
+   * 版 ID。中身が同じ間は同じ、中身が違えば必ず別。docs/page-versions.md 参照。
+   */
+  versionId: string;
 }
 
 /**
@@ -323,7 +332,9 @@ export function createWork(
     canvasHeight,
     paperKind,
     ...(thumbnail === undefined ? {} : { thumbnail }),
-    pages: [{ id: pageId, image, deleted: false, layers: defaultLayers(pageId, image) }],
+    pages: [
+      { id: pageId, image, deleted: false, layers: defaultLayers(pageId, image), versionId: createId("ver") },
+    ],
     snapshots: [],
   };
 }

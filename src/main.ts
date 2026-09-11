@@ -16,6 +16,7 @@ import {
   CANVAS_HEIGHT,
   CANVAS_SIZES,
   CANVAS_WIDTH,
+  createId,
   createWork,
   snapshotOf,
   type CanvasSizeId,
@@ -2676,6 +2677,9 @@ class App {
             deleted: page?.deleted ?? false,
             layers: layerImages.map((layer) => ({ ...layer, deleted: false })),
             activeLayerId: this.surface.activeLayerId,
+            // 絵を焼き直すたびに新しい版(docs/page-versions.md「版 ID の規則」)。
+            // 今は常に 1 コマなので保存のたびに新しい版になる。
+            versionId: createId("ver"),
           },
         ],
         thumbnail,
