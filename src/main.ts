@@ -80,6 +80,7 @@ import {
   FULLSCREEN_EXIT_SVG,
   FULLSCREEN_SVG,
   MOVE_SVG,
+  ONION_SVG,
   SOUND_OFF_SVG,
   SOUND_ON_SVG,
   withHiddenBadge,
@@ -139,6 +140,14 @@ const UNDERLAY_OUTSIDE_ALPHA_FACTOR = 0.25;
 /** 紙の角丸(.paper の border-radius)に合わせる。置く中の全画面 canvas でのクリップに使う。 */
 const PAPER_CORNER_RADIUS = 14;
 
+/**
+ * 「うすく」で前のコマを重ねる濃さ(onionCanvas の opacity)。docs/animation.md の決めたこと
+ * どおり濃さは固定。0.3 程度にしているのは、乗算(multiply)なので既にこの上に紙色の分だけ
+ * 暗くなる効果が乗る一方、今のコマの線と紛れて見分けが付かなくなるほど濃くはしたくない
+ * ためのバランス(実データの画素で確認、2026-09-11)。
+ */
+const ONION_OPACITY = 0.3;
+
 /** 描き終わってから保存するまでの待ち時間。描画中に保存すると重い。 */
 const AUTOSAVE_DELAY_MS = 800;
 /** 履歴(まえにもどす)を積む間隔。 */
@@ -165,6 +174,13 @@ class App {
   /** 写真の下敷きを描く専用キャンバス。紙のキャンバスには一切描かない(理由は buildStage 参照)。 */
   private readonly underlayCanvas: HTMLCanvasElement;
   private readonly underlayCtx: CanvasRenderingContext2D | null;
+  /**
+   * 「うすく」(前のコマ)を描く専用キャンバス。underlayCanvas と同じく紙のキャンバスには
+   * 一切描かない(作品の保存データにも PNG 書き出しにも入らない、表示だけの層)。
+   * 置き場所の理由は buildStage(paperWrap.insertBefore 周り)のコメント参照。
+   */
+  private readonly onionCanvas: HTMLCanvasElement;
+  private readonly onionCtx: CanvasRenderingContext2D | null;
   /**
    * 置く操作中だけ出す、画面全体を覆う canvas。
    * 写真を紙の外まで(はみ出し込みで)画面座標で描き、ドラッグ・ピンチもここで拾う
@@ -355,6 +371,22 @@ class App {
   private removeFrameConfirm!: RemoveLayerConfirm;
 
   /**
+   * パラパラの作品を開いている間だけ出す、右側の縦並びボタンの入れ物(手順5「うすく」・
+   * 手順6「見る」を並べる予定)。右上の stage-toggles(音/全画面/かくす/フィルタ/ぜんぶ見る)
+   * とは別の入れ物にして、その下に重ならないよう並べる。
+   */
+  private flipbookControls!: HTMLElement;
+  private onionButton: HTMLElement | null = null;
+  /** 「うすく」の ON/OFF。docs/animation.md どおり既定 ON、状態は保存しない(起動すると必ず ON)。 */
+  private onionEnabled = true;
+  /**
+   * updateOnionLayer() の非同期読み込み(createImageBitmap)が終わる前にコマ・作品が
+   * 切り替わったら、古い結果で描かないための世代カウンタ。呼ぶたびに +1 し、
+   * await の後で値がずれていたら(=もっと新しい呼び出しが割り込んだら)描かずに捨てる。
+   */
+  private onionGeneration = 0;
+
+  /**
    * 塗り方。既定は「かこみ」(色の境界まで)。
    *
    * 境界で止まるという理屈は、大人には当たり前でも子どもには見えない。
@@ -403,6 +435,18 @@ class App {
     this.underlayCanvas.width = this.canvasWidth;
     this.underlayCanvas.height = this.canvasHeight;
     this.underlayCtx = this.underlayCanvas.getContext("2d");
+    // 「うすく」の前のコマ。underlayCanvas と同じく placement 座標系を持たないので、
+    // 実ピクセルは素直に canvasWidth x canvasHeight にして CSS で紙いっぱいへ伸ばす。
+    this.onionCanvas = document.createElement("canvas");
+    this.onionCanvas.className = "onion-layer";
+    this.onionCanvas.width = this.canvasWidth;
+    this.onionCanvas.height = this.canvasHeight;
+    this.onionCtx = this.onionCanvas.getContext("2d");
+    // 濃さは固定(ONION_OPACITY)。乗算(mix-blend-mode: multiply)は style.css 側で常に掛ける
+    // (docs/animation.md「うすく」: 一番下のかさねは紙の色で不透明なので、そのまま半透明で
+    // 重ねると今のコマの線まで紙色に覆われて褪せる。乗算なら紙のほぼ白い色は影響せず、
+    // 前のコマの線だけが薄く乗る)。
+    this.onionCanvas.style.opacity = String(ONION_OPACITY);
     // 紙の質感の層。写真の下敷きと同じく実ピクセルを canvasWidth x canvasHeight で作り
     // CSS で紙と同じ大きさへ伸ばす。mix-blend-mode: multiply で重ねる(画面フィルタの
     // 「よる」と同じ仕組み)。
@@ -476,11 +520,17 @@ class App {
     this.applyCanvasSizeStyle();
     // 描いている最中の末尾を映す層(surface.ts の overlay)。方眼より下に敷く。
     this.paperWrap.insertBefore(this.surface.overlay, this.gridLayer);
-    // 重なり順: 紙 → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → 方眼。方眼はマス目の
-    // 目安なので常に一番上に見えていてほしい。紙の質感は絵そのものの一部という位置づけで
-    // 下敷き(写真)より下、仮インクより上に置く。
+    // 重なり順: 紙 → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → うすく(前のコマ) → 方眼。
+    // 方眼はマス目の目安なので常に一番上に見えていてほしい。紙の質感は絵そのものの一部と
+    // いう位置づけで下敷き(写真)より下、仮インクより上に置く。
+    // うすく(onionCanvas)は「今のコマの上に乗算で重ねる」ものなので、紙(paper)・仮インク
+    // (overlay)より必ず上に無ければ乗算が効かない。写真の下敷き(underlayCanvas)より上に
+    // したのは、写真とパラパラはどちらも稀にしか同時に使われないが、うすくは「今描いている
+    // 線」と見比べる機能なので、参考素材である写真よりも絵そのものに近い側(方眼のすぐ下)に
+    // 置いた方が自然なため。方眼(マス目の目安線)は常に一番上のまま変えない。
     this.paperWrap.insertBefore(this.paperTextureCanvas, this.gridLayer);
     this.paperWrap.insertBefore(this.underlayCanvas, this.gridLayer);
+    this.paperWrap.insertBefore(this.onionCanvas, this.gridLayer);
     this.guide = new GuideBubble(document.body);
 
     // 画面フィルタの層。position: fixed で viewport を直接覆うので、transform を持つ
@@ -499,6 +549,7 @@ class App {
     this.buildFullscreenToggle();
     this.buildUnderlayToggle();
     this.buildScreenFilterToggle();
+    this.buildFlipbookControls();
     this.buildFitButton();
     this.buildPlaceDoneButton();
     this.installInput(canvas);
@@ -624,6 +675,8 @@ class App {
 
     this.underlayCanvas.width = width;
     this.underlayCanvas.height = height;
+    this.onionCanvas.width = width;
+    this.onionCanvas.height = height;
     this.paperTextureCanvas.width = width;
     this.paperTextureCanvas.height = height;
     // 紙テクスチャは寸法込みで焼くので、寸法が変わったキャッシュは使い回せない。
@@ -874,6 +927,9 @@ class App {
     // パラパラの作品を開いたらコマの帯を出し、そうでなければ必ず閉じる
     // (layerStripVisible と同じく、開けっぱなしのまま別の作品を開く事故を作らないため)。
     this.setFrameStripVisible(this.work?.animation === true);
+    // 「うすく」も作品を開いた経路の1つなのでここで揃える(clearFrameThumbCache の後、
+    // 古いキャッシュが残っていない状態で読み直させる)。
+    this.syncOnion();
   }
 
   /** frameThumbCache の中身をすべて閉じて空にする(古い作品の画像を握ったままにしない)。 */
@@ -1340,6 +1396,94 @@ class App {
   }
 
   /**
+   * パラパラの作品を開いている間だけ出す、右側縦並びの入れ物(docs/animation.md 手順5
+   * 「うすく」、手順6「見る」を並べる予定)。stage-toggles(右上、音/全画面/かくす/
+   * フィルタ/ぜんぶ見る)とは別の入れ物にして、その下へ重ならないよう置く
+   * (座標は style.css の .flipbook-controls 参照)。
+   */
+  private buildFlipbookControls(): void {
+    this.flipbookControls = document.createElement("div");
+    this.flipbookControls.className = "flipbook-controls";
+    this.stage.appendChild(this.flipbookControls);
+    this.buildOnionToggle();
+  }
+
+  /**
+   * 「うすく」ボタン。見た目はツールバーの道具ボタン(.tool-button)の規格に揃える
+   * (大きさ・角丸・ラベル)。ツールバーには乗せず flipbookControls に浮かべるので、
+   * 浮いて見えるよう影だけ style.css 側で足す(.onion-toggle)。
+   */
+  private buildOnionToggle(): void {
+    const button = document.createElement("button");
+    button.className = "tool-button onion-toggle";
+    const icon = document.createElement("span");
+    icon.className = "icon";
+    icon.innerHTML = ONION_SVG;
+    const label = document.createElement("span");
+    label.className = "label";
+    label.appendChild(renderRuby([{ base: "うすく" }]));
+    button.append(icon, label);
+    button.setAttribute("aria-label", "うすく");
+    button.addEventListener("click", () => {
+      this.onionEnabled = !this.onionEnabled;
+      this.syncOnion();
+      this.sound.play("poko");
+    });
+    this.flipbookControls.appendChild(button);
+    this.onionButton = button;
+  }
+
+  /**
+   * flipbookControls(「うすく」ボタン)の出し入れ・見た目と、onionCanvas の中身をまとめて
+   * 今の状態に揃える。パラパラの作品を開いている間だけ出す(docs/animation.md「うすく」)。
+   * 呼び出しは「作品を開いた時・startFlipbook・selectFrame・addFrame・removeFrame・
+   * reorderFrame の後」に限る(描くたびには呼ばない。前のコマは描いている間は変わらないため)。
+   */
+  private syncOnion(): void {
+    const inFlipbook = this.work?.animation === true;
+    this.flipbookControls.classList.toggle("is-visible", inFlipbook);
+    this.onionButton?.classList.toggle("is-active", this.onionEnabled);
+    void this.updateOnionLayer();
+  }
+
+  /**
+   * onionCanvas に「今のコマの直前のコマ」の絵(PageData.image、合成済み PNG)を描く。
+   * 1 コマ目・パラパラでない作品・スイッチ OFF のときは隠す。
+   *
+   * コマの帯(drawFramePageThumbnail)と同じ frameThumbCache(versionId キー)を使い回す。
+   * createImageBitmap は非同期なので、読み終わる前にコマ・作品が切り替わっていたら
+   * (onionGeneration がずれていたら)描かずに捨てる。
+   */
+  private async updateOnionLayer(): Promise<void> {
+    const generation = ++this.onionGeneration;
+    const work = this.work;
+    if (work?.animation !== true || !this.onionEnabled) {
+      this.onionCanvas.classList.remove("is-on");
+      return;
+    }
+    const pages = work.pages.filter((page) => !page.deleted);
+    const activeIndex = pages.findIndex((page) => page.id === currentPageOf(work)?.id);
+    const prevPage = activeIndex > 0 ? pages[activeIndex - 1] : undefined;
+    if (prevPage === undefined) {
+      // 1コマ目(またはコマが見つからない異常時)は前のコマが無いので隠す。
+      this.onionCanvas.classList.remove("is-on");
+      return;
+    }
+    const cached = this.frameThumbCache.get(prevPage.versionId);
+    const bitmap = cached ?? (await createImageBitmap(prevPage.image));
+    if (cached === undefined) {
+      // 読み込みの間にコマ・作品が切り替わっていたら、この結果はもう要らない。
+      if (generation !== this.onionGeneration) return;
+      this.frameThumbCache.set(prevPage.versionId, bitmap);
+    }
+    if (this.onionCtx !== null) {
+      this.onionCtx.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+      this.onionCtx.drawImage(bitmap, 0, 0, this.canvasWidth, this.canvasHeight);
+    }
+    this.onionCanvas.classList.add("is-on");
+  }
+
+  /**
    * 全画面ボタン。使える環境にだけ出す。
    * iPhone の WebKit は <video> 以外の全画面に対応しておらず、押しても何も起きない
    * (ホーム画面に追加すれば全画面で開ける)。押して無反応なボタンは置かない。
@@ -1634,6 +1778,9 @@ class App {
     this.syncFlipbookButtons();
     // パラパラを始めた直後はコマの帯を出す(docs/animation.md「コマの帯」)。
     this.setFrameStripVisible(true);
+    // 始めた直後は1コマ目だけなので前のコマは無い(syncOnion 内で隠す判定になる)が、
+    // 「うすく」ボタン自体はここで出す。
+    this.syncOnion();
     this.sound.play("fanfare");
   }
 
@@ -2679,6 +2826,7 @@ class App {
       await this.restorePage(page); // ③
       await this.putFrameWork(this.work); // ④
       this.syncHistoryButtons();
+      this.syncOnion(); // 切り替え先の1つ前のコマへ描き直す。
       this.sound.play("poko");
     } finally {
       this.frameBusy = false;
@@ -2735,6 +2883,7 @@ class App {
       this.dirty = false; // ⑤ 既に焼いてあるので save() は通さない。
       await this.putFrameWork(this.work);
       this.syncHistoryButtons();
+      this.syncOnion(); // 新しいコマの直前(=元居たコマ)を描き直す。
       this.sound.play("poko");
     } finally {
       this.frameBusy = false;
@@ -2808,6 +2957,7 @@ class App {
 
       await this.putFrameWork(this.work); // ⑦
       this.syncHistoryButtons(); // ⑧
+      this.syncOnion(); // 消えたコマが「直前のコマ」だった場合等に備えて描き直す。
       this.sound.play("shu");
     } finally {
       this.frameBusy = false;
@@ -2840,6 +2990,7 @@ class App {
 
       await this.putFrameWork(this.work);
       this.syncHistoryButtons();
+      this.syncOnion(); // 並び順が変わったので「直前のコマ」も変わりうる。
     } finally {
       this.frameBusy = false;
     }

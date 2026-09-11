@@ -268,6 +268,30 @@ body {
 }
 
 /*
+ * 「うすく」(前のコマ)。underlay-layer(写真)と同じ実ピクセル・CSS の扱い(main.ts が
+ * canvasWidth x canvasHeight で作り、ここで紙いっぱいに伸ばす)。docs/animation.md
+ * 「うすく」のとおり、一番下のかさねは紙の色で不透明なので、ふつうの半透明で重ねると
+ * 今のコマの線まで紙色に覆われて褪せて見える。mix-blend-mode: multiply(乗算)なら紙の
+ * ほぼ白い色は影響を与えず、前のコマの線だけが薄く乗る(.paper-texture-layer の
+ * 「よる」フィルタと同じ考え方)。濃さ(opacity)は固定の定数(main.ts の ONION_OPACITY)を
+ * JS 側で1回だけ設定する。
+ */
+.onion-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  border-radius: 14px;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+}
+
+.onion-layer.is-on {
+  display: block;
+}
+
+/*
  * 置く操作中だけ出る全画面 canvas。写真の全体を画面座標で描き、紙の外へはみ出した
  * 部分もここでだけ見える(はみ出し=写真の続きがある、という手がかり)。
  * ドラッグ・ピンチもここで拾う(installPlaceInput)。
@@ -399,6 +423,35 @@ body {
 
 .underlay-toggle.is-visible {
   display: block;
+}
+
+/*
+ * パラパラの作品を開いている間だけ出す、右側縦並びの入れ物(「うすく」・将来の「見る」)。
+ * .stage-toggles(音/全画面/かくす/フィルタ/ぜんぶ見る、top:12px right:12px)と同じ右端を
+ * 使うが、重ならないようその下へ置く(56px のボタン + 12px の余白ぶん下げる)。
+ */
+.flipbook-controls {
+  position: absolute;
+  top: 80px;
+  right: 12px;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 8;
+}
+
+.flipbook-controls.is-visible {
+  display: flex;
+}
+
+/*
+ * 「うすく」。見た目は .tool-button(ツールバーの道具ボタン)の規格をそのまま使うが、
+ * ツールバーの中(#f7f3ec の帯の上)ではなく紙の上に浮くので、浮いて見えるよう
+ * .sound-toggle と同じ影を足す。
+ */
+.onion-toggle {
+  box-shadow: var(--shadow);
 }
 
 /*
