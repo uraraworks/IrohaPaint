@@ -258,6 +258,34 @@ export class LayerStrip {
     }
 
     if (this.options.addPosition === "end") this.track.appendChild(addTile);
+
+    this.scrollActiveIntoView();
+  }
+
+  /**
+   * 選ばれている札(.layer-tile.is-active)が track の見える範囲に収まっていなければ、
+   * track.scrollTop だけを動かして寄せる(コマが増えると今のコマの札が帯の外へ
+   * 追いやられ、「＋」を押したのに新しいコマがどこにあるか分からなくなるため)。
+   *
+   * scrollIntoView() は使わない: 祖先(.stage 等)まで一緒にスクロールしてしまうことが
+   * あり、ページ全体が動く事故になりうる。ここでは track 自身の scrollTop だけを
+   * 直接計算して動かす。
+   *
+   * ドラッグで並べ替えている最中(dragState !== null)は触らない。指(マウス)で
+   * 持っている札の位置を、こちらが横から動かしてしまうと掴んでいる感触が壊れるため。
+   */
+  private scrollActiveIntoView(): void {
+    if (this.dragState !== null) return;
+    const active = this.track.querySelector<HTMLElement>(".layer-tile.is-active");
+    if (active === null) return;
+    const trackRect = this.track.getBoundingClientRect();
+    const tileRect = active.getBoundingClientRect();
+    if (tileRect.top >= trackRect.top && tileRect.bottom <= trackRect.bottom) return; // 既に全部見えている
+    if (tileRect.top < trackRect.top) {
+      this.track.scrollTop -= trackRect.top - tileRect.top;
+    } else if (tileRect.bottom > trackRect.bottom) {
+      this.track.scrollTop += tileRect.bottom - trackRect.bottom;
+    }
   }
 
   private buildAddTile(): HTMLElement {
