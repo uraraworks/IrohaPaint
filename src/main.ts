@@ -18,6 +18,7 @@ import {
   CANVAS_WIDTH,
   createId,
   createWork,
+  currentPageOf,
   snapshotOf,
   type CanvasSizeId,
   type CellGrid,
@@ -2542,8 +2543,10 @@ class App {
   private async revertTo(workId: string, snapshotId: string): Promise<void> {
     const work = await this.store.get(workId);
     const snapshot = work?.snapshots.find((item) => item.id === snapshotId);
-    const page = snapshot?.pages[0];
-    if (work === null || work === undefined || snapshot === undefined || page === undefined) return;
+    // 控えに 1 コマも無ければ戻しようが無い(全コマ消去という異常時の保険。
+    // docs/animation.md「前に戻す」は控えの全コマを対象にするので、ここも pages[0] だけでなく
+    // 控え全体で判断する)。
+    if (work === null || work === undefined || snapshot === undefined || snapshot.pages.length === 0) return;
 
     // 巻き戻す作品を開いていない場合は、まずそちらへ移る。
     if (this.work?.id !== workId) {
@@ -2554,6 +2557,16 @@ class App {
       this.applyInitialView();
     }
     await this.captureSnapshot("revert");
+    // 「前に戻す」は控えの全コマを今の姿にする(docs/animation.md「決めたこと」)。
+    // 今開いていたコマと同じ id が控えにあれば引き続きそのコマを開き、無ければ
+    // (コマが入れ替わった/消えていた等)控えの 1 コマ目を開く。
+    const activeId = this.work?.activePageId;
+    const page =
+      (activeId !== undefined ? snapshot.pages.find((p) => p.id === activeId && !p.deleted) : undefined) ??
+      snapshot.pages.find((p) => !p.deleted) ??
+      snapshot.pages[0];
+    if (page === undefined || this.work === null) return;
+    this.work = { ...this.work, pages: snapshot.pages, activePageId: page.id };
     // 履歴画像は work と同じ寸法で焼かれているので、work の寸法に揃えてから描き戻す。
     this.applyCanvasSize(work.canvasWidth, work.canvasHeight);
     await this.restorePage(page);
@@ -2574,7 +2587,7 @@ class App {
     }
     await this.save();
     const work = await this.store.get(id);
-    const page = work?.pages[0];
+    const page = work ? currentPageOf(work) : undefined;
     if (work === null || work === undefined || page === undefined) return;
     // 開く作品の寸法に合わせてから描き戻す(いまは全作品 1748x1181 なので実質は保険)。
     this.applyCanvasSize(work.canvasWidth, work.canvasHeight);
@@ -2635,7 +2648,7 @@ class App {
         await this.store.put(this.work);
       } else {
         this.applyCanvasSize(next.canvasWidth, next.canvasHeight);
-        const page = next.pages[0];
+        const page = currentPageOf(next);
         if (page !== undefined) await this.restorePage(page);
         this.work = next;
       }
@@ -2668,36 +2681,49 @@ class App {
     // 立ててくれるので、ここで倒しても取りこぼさない。
     this.dirty = false;
     const png = await this.surface.toPng();
-    const thumbnail = await this.surface.toThumbnail();
     const now = Date.now();
     let work = this.work;
     if (work === null) {
-      work = createWork(png, now, thumbnail);
+      work = createWork(png, now, await this.surface.toThumbnail());
     } else {
-      const page = work.pages[0];
-      const pageId = page?.id ?? "page-0";
+      // 今のコマ(docs/animation.md「保存」)だけを焼き直し、他のコマは前の PageData を
+      // そのまま使う(版を増やさない)。今のコマ以外を Surface に無い絵で上書きしないよう、
+      // id が一致するページだけを差し替える。
+      const currentPage = currentPageOf(work);
+      const targetId = currentPage?.id ?? work.pages[0]?.id ?? "page-0";
       // Surface が実際に持っているレイヤー構成をそのまま書く(image は従来通り合成結果)。
       // 各レイヤーは透過のまま保存する(toLayerImages() 参照。紙色で塗ると復元時に
       // 上のレイヤーが下を隠してしまう)。id は Surface 側のものをそのまま使うので、
       // 保存のたびに別レイヤー扱いになることはない。
       const layerImages = await this.surface.toLayerImages();
-      work = {
-        ...work,
-        updatedAt: now,
-        pages: [
-          {
-            id: pageId,
-            image: png,
-            deleted: page?.deleted ?? false,
-            layers: layerImages.map((layer) => ({ ...layer, deleted: false })),
-            activeLayerId: this.surface.activeLayerId,
-            // 絵を焼き直すたびに新しい版(docs/page-versions.md「版 ID の規則」)。
-            // 今は常に 1 コマなので保存のたびに新しい版になる。
-            versionId: createId("ver"),
-          },
-        ],
-        thumbnail,
-      };
+      const layers = layerImages.map((layer) => ({ ...layer, deleted: false }));
+      const activeLayerId = this.surface.activeLayerId;
+      const bake = (base: { id: string; deleted: boolean }): PageData => ({
+        id: base.id,
+        image: png,
+        deleted: base.deleted,
+        layers,
+        activeLayerId,
+        // 絵を焼き直すたびに新しい版(docs/page-versions.md「版 ID の規則」)。
+        versionId: createId("ver"),
+      });
+      let matched = false;
+      let pages = work.pages.map((p) => {
+        if (p.id !== targetId) return p;
+        matched = true;
+        return bake(p);
+      });
+      if (!matched) {
+        // 一致するページが無い異常時(currentPageOf は本来 pages 内の id しか返さない
+        // ので起きない想定だが、絵を落とさないことを優先して 1 枚目として書き足す)。
+        pages = [bake({ id: targetId, deleted: false }), ...pages];
+      }
+      // サムネイルは一覧の表紙用(コマ 1 = 消えていない最初のページ)なので、
+      // それ以外のコマを保存したときは古いサムネイルのまま据え置く(無駄に焼かない)。
+      const coverPage = work.pages.find((p) => !p.deleted) ?? work.pages[0];
+      const isCover = coverPage !== undefined && coverPage.id === targetId;
+      const thumbnail = isCover ? await this.surface.toThumbnail() : work.thumbnail;
+      work = { ...work, updatedAt: now, pages, activePageId: targetId, thumbnail };
       // 「前に戻す」用の履歴。描いている間は数分おきに 1 件だけ積む(追記のみ)。
       if (now - this.lastSnapshotAt > SNAPSHOT_INTERVAL_MS) {
         work = appendSnapshot(work, snapshotOf(work, now, "auto"));
@@ -2721,7 +2747,7 @@ class App {
       // 前回ひらいていた絵の続きから。無ければいちばん新しい絵。
       const saved = this.currentWorkId === null ? null : await this.store.get(this.currentWorkId);
       const latest = saved !== null && !saved.deleted ? saved : (await this.store.list())[0];
-      const page = latest?.pages[0];
+      const page = latest ? currentPageOf(latest) : undefined;
       if (latest === undefined || page === undefined) return;
       this.applyCanvasSize(latest.canvasWidth, latest.canvasHeight);
       await this.restorePage(page);

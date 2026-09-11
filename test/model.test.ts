@@ -6,10 +6,12 @@ import {
   CANVAS_SIZES,
   CANVAS_WIDTH,
   createWork,
+  currentPageOf,
   KEEP_RECENT,
   MAX_SNAPSHOTS,
   snapshotOf,
   thinSnapshots,
+  type PageData,
   type WorkSnapshot,
 } from "../src/core/model.ts";
 import { MemoryWorkStore, readRow, unwrap, type StoredEnvelope } from "../src/core/workStore.ts";
@@ -371,5 +373,44 @@ describe("CANVAS_SIZES(将来のサイズ選択用の表・まだ未使用)", ()
     expect(def.width).toBe(CANVAS_WIDTH);
     // 実寸 257x364mm の縦横比を保っているか(四捨五入の誤差 1px 未満)
     expect(def.height).toBeCloseTo((def.width * 364) / 257, 0);
+  });
+});
+
+describe("currentPageOf(今のコマを決める。docs/animation.md 手順2)", () => {
+  function page(id: string, deleted = false): PageData {
+    return { id, image: dummy, deleted, layers: [], versionId: `ver-${id}` };
+  }
+
+  it("activePageId と一致する(消えていない)ページを返す", () => {
+    const work = { ...createWork(dummy, 1000), pages: [page("a"), page("b"), page("c")], activePageId: "b" };
+    expect(currentPageOf(work)?.id).toBe("b");
+  });
+
+  it("activePageId が無ければ 1 コマ目を返す", () => {
+    const work = { ...createWork(dummy, 1000), pages: [page("a"), page("b")] };
+    expect(currentPageOf(work)?.id).toBe("a");
+  });
+
+  it("activePageId に一致するページが見つからなければ 1 コマ目を返す", () => {
+    const work = {
+      ...createWork(dummy, 1000),
+      pages: [page("a"), page("b")],
+      activePageId: "does-not-exist",
+    };
+    expect(currentPageOf(work)?.id).toBe("a");
+  });
+
+  it("activePageId のページが消えていれば、消えていない最初のページを返す", () => {
+    const work = {
+      ...createWork(dummy, 1000),
+      pages: [page("a", true), page("b", true), page("c")],
+      activePageId: "b",
+    };
+    expect(currentPageOf(work)?.id).toBe("c");
+  });
+
+  it("1 コマ目が消えていれば、次の消えていないコマを 1 コマ目扱いにする", () => {
+    const work = { ...createWork(dummy, 1000), pages: [page("a", true), page("b")] };
+    expect(currentPageOf(work)?.id).toBe("b");
   });
 });

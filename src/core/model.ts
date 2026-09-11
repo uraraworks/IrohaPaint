@@ -376,6 +376,21 @@ export function snapshotOf(work: WorkRecord, now: number, reason: SnapshotReason
   };
 }
 
+/**
+ * 「今のコマ」を決める。docs/animation.md の手順2。
+ * activePageId と一致する消えていないページを優先し、無ければ消えていない最初の
+ * ページ(＝並べ替え後の新しい 1 コマ目)、それも無ければ(全コマ消去という
+ * 異常時でも何か返せるよう)pages[0] を返す。呼び出し側はこれを「保存すべき
+ * 1 コマ」「開くべき 1 コマ」の両方の基準にする。
+ */
+export function currentPageOf(work: WorkRecord): PageData | undefined {
+  const byId = work.activePageId
+    ? work.pages.find((page) => page.id === work.activePageId && !page.deleted)
+    : undefined;
+  if (byId) return byId;
+  return work.pages.find((page) => !page.deleted) ?? work.pages[0];
+}
+
 // ── 選べるキャンバスサイズの表(未使用) ──────────────────────────────
 //
 // まだどこからも使わない。将来「新しい作品」でサイズを選べるようにする際に、
