@@ -2040,15 +2040,14 @@ class App {
   }
 
   /**
-   * 「パラパラ」ボタン。docs/animation.md「パラパラの開始」。
-   * かさねが 2 枚以上ある作品では、まとめてよいか一度だけ確かめてから始める
-   * (1 枚ならそのまま始まる)。既に パラパラ の作品では、コマの帯を出し入れする
-   * トグルにする(手順4a。「かさね」ボタンと同じ音の作法)。
+   * 「パラパラ」ボタン。docs/animation.md「パラパラの開始・解除」。
+   * 始める／やめるの切り替えボタン。既にパラパラの作品では stopFlipbook() でやめ、
+   * そうでなければ始める(かさねが 2 枚以上ある作品では、まとめてよいか一度だけ確かめる。
+   * 1 枚ならそのまま始まる)。
    */
   private onFlipbookButton(): void {
     if (this.work?.animation === true) {
-      this.setFrameStripVisible(!this.frameStripVisible);
-      this.sound.play(this.frameStripVisible ? "fanfare" : "poko");
+      void this.stopFlipbook();
       return;
     }
     if (this.surface.layerCount > 1) {
@@ -2087,6 +2086,39 @@ class App {
     // 「うすく」ボタン自体はここで出す。
     this.syncOnion();
     this.sound.play("fanfare");
+  }
+
+  /**
+   * パラパラをやめる。docs/animation.md「パラパラの開始・解除」。
+   * いつでも解除でき、コマは pages に残したまま(消すのは「けす」でだけ行う操作なので、
+   * ここでは一切触らない)。開いていたコマ(activePageId)もそのまま、普通の絵として
+   * 描き続けられる(かさねも増やせる)。もう一度「パラパラ」を押せば、残っていたコマごと
+   * startFlipbook() で戻る(startFlipbook() は pages に触らないため)。
+   *
+   * 手順: ①再生中なら止める → ②今の描きかけを保存 → ③animation を倒す →
+   * ④焼き直さずに書く(addFrame の setPaperKind と同じ作法) → ⑤コマの帯を隠す →
+   * ⑥「かさね」ボタン・「パラパラ」の見た目を揃える → ⑦「見る」「うすく」を隠す → ⑧音
+   * frameBusy はコマの帯の操作(selectFrame 等)と共用(構成を書き換える処理同士の再入を防ぐ)。
+   */
+  private async stopFlipbook(): Promise<void> {
+    this.stopPlayback(); // ①
+    if (this.frameBusy) return;
+    if (this.work === null) return;
+    this.frameBusy = true;
+    try {
+      await this.save(); // ② 今の描きかけをやめる前のコマへ焼く。
+      if (this.work === null) return; // 型のための保険。
+      this.work = { ...this.work, animation: false }; // ③
+      this.dirty = false; // ④ animation を倒しただけで絵は焼き直していない。
+      await this.putFrameWork(this.work);
+      this.setFrameStripVisible(false); // ⑤
+      this.syncFlipbookButtons(); // ⑥ 「かさね」ボタンを戻し、「パラパラ」の is-active を外す。
+      this.syncOnion(); // ⑦ inFlipbook===false になったので「見る」「うすく」も隠れる。
+      this.syncHistoryButtons();
+      this.sound.play("poko"); // ⑧
+    } finally {
+      this.frameBusy = false;
+    }
   }
 
   /**
