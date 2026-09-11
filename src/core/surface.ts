@@ -1008,8 +1008,44 @@ export class Surface {
     const index = this.layers.findIndex((layer) => layer.id === id);
     if (index === -1) return false;
     const layer = this.layers[index] as LayerSlot;
+    const source = index === this.activeIndex ? this.canvas : layer.canvas;
+    this.drawScaledThumbnail(source, target);
+    return true;
+  }
+
+  /**
+   * 見えているものを合成して小さく描き写す(パラパラを始める確かめダイアログ用。
+   * removeLayerConfirm.ts が「けす」の確かめに使うのと同じ仕組みを、「まとめる」の
+   * 確かめにも転用する)。drawLayerThumbnail() と同じ縮尺・段階縮小の作法。
+   */
+  drawCompositeThumbnail(target: HTMLCanvasElement): void {
+    this.drawScaledThumbnail(this.composite(), target);
+  }
+
+  /**
+   * 縮小して小さい canvas へ描く共通処理(drawLayerThumbnail / drawCompositeThumbnail で共用)。
+   * かさねは透過なので、紙の色を敷いてから描かないと札が真っ白で何も見えない
+   * (toThumbnail() が合成結果の前に紙色を敷いているのと同じ理由)。
+   *
+   * 紙は作品ごとに縦長にも横長にもなる(CANVAS_SIZES 参照)。target は正方形の的
+   * (呼び出し側が width===height にして渡す約束)として扱い、紙の縦横比を保ったまま
+   * 中央に描く。CSS の object-fit:contain を canvas に頼る手もあるが、実ピクセルと
+   * CSS 表示サイズが食い違ったまま(元は 82x55 の実ピクセルを 82x82 の CSS 枠へ
+   * 押し込んでいた)だと環境によっては引き伸ばして描かれてしまう実害があったため、
+   * ここで実ピクセルの時点からレターボックス(余白は紙色のまま)にしておく。
+   *
+   * 実測値: 1748x1181 の原寸を 82x82 の的へ drawImage 一発(約1/21)で縮めると、
+   * 1px 程度の細い線が縮小フィルタで周囲の紙色に溶けて消える。同じ線を的の
+   * 大きさだけ変えて描いた最小輝度(紙色は253相当・小さいほど濃い)は
+   *   的300px … 61 / 99 / 61 (どれも見える)
+   *   的82px  … 107 / 252 / 107 (真ん中が紙とほぼ同じ = 消える)
+   * で、一度に大きく縮めるほど線が消えることが分かっている。ブラウザの縮小
+   * フィルタは「毎回2分の1程度まで」なら間引きに追従できるので、的の大きさに
+   * 一気に落とさず半分ずつ縮小して近づける(縮小の定石)。
+   */
+  private drawScaledThumbnail(source: CanvasImageSource, target: HTMLCanvasElement): void {
     const ctx = target.getContext("2d");
-    if (ctx === null) return false;
+    if (ctx === null) return;
     ctx.fillStyle = PAPER_COLOR;
     ctx.fillRect(0, 0, target.width, target.height);
     const scale = Math.min(target.width / this.width, target.height / this.height);
@@ -1017,17 +1053,8 @@ export class Surface {
     const drawHeight = this.height * scale;
     const dx = (target.width - drawWidth) / 2;
     const dy = (target.height - drawHeight) / 2;
-    const source = index === this.activeIndex ? this.canvas : layer.canvas;
 
-    // 実測値: 1748x1181 の原寸を 82x82 の的へ drawImage 一発(約1/21)で縮めると、
-    // 1px 程度の細い線が縮小フィルタで周囲の紙色に溶けて消える。同じ線を的の
-    // 大きさだけ変えて描いた最小輝度(紙色は253相当・小さいほど濃い)は
-    //   的300px … 61 / 99 / 61 (どれも見える)
-    //   的82px  … 107 / 252 / 107 (真ん中が紙とほぼ同じ = 消える)
-    // で、一度に大きく縮めるほど線が消えることが分かっている。ブラウザの縮小
-    // フィルタは「毎回2分の1程度まで」なら間引きに追従できるので、的の大きさに
-    // 一気に落とさず半分ずつ縮小して近づける(縮小の定石)。
-    let src: CanvasImageSource = source;
+    let src = source;
     let srcW = this.width;
     let srcH = this.height;
     if (srcW > drawWidth * 2 && srcH > drawHeight * 2) {
@@ -1052,7 +1079,6 @@ export class Surface {
       }
     }
     ctx.drawImage(src, 0, 0, srcW, srcH, dx, dy, drawWidth, drawHeight);
-    return true;
   }
 
   /**
@@ -1154,6 +1180,55 @@ export class Surface {
     first.canvas.style.display = "none";
     this.layers = [first];
     this.activeIndex = 0;
+  }
+
+  /**
+   * 見えているかさねだけを不透明度込みで 1 枚に合成し、かさねを 1 枚に畳む
+   * (docs/animation.md「パラパラの開始」)。composite() と同じ結果を、そのまま
+   * かさね本体として焼き直す形になる。
+   *
+   * collapseToSingleLayer() とは残す 1 枚の選び方が違う(あちらは「1 枚目をそのまま
+   * 残す」だけで中身を合成しない)ため、ここでは別メソッドにする。
+   * - 残す 1 枚の id は **一番下** のかさねのもの(帯の一番下の札がそのまま残る形にして、
+   *   まとめた後も違和感が無いようにする)。
+   * - 隠れていたかさねは合成に含めないので消える。undo 履歴も捨てる
+   *   (「戻す」はこの操作をまたいでは意味を持たない。取り戻したいときは、
+   *   呼び出し側が直前に撮る控え(SnapshotReason "flatten")で受ける)。
+   * - 紙の色は塗らない(composite() 同様、透明のまま。かさね本体は元々紙色を持たない)。
+   * - 元から 1 枚だけなら何もしない。
+   */
+  flattenVisibleLayers(): void {
+    if (this.layers.length <= 1) return;
+    this.cancelStroke();
+    this.clearShapePreview();
+
+    // 畳む前に合成する(this.layers・activeIndex を変える前でないと、
+    // composite() がアクティブなかさねの画素を this.canvas から正しく拾えない)。
+    const flat = this.composite();
+
+    const bottom = this.layers[0] as LayerSlot;
+    // 残す 1 枚以外は DOM からも外す(collapseToSingleLayer() と同じ後始末)。
+    for (let i = 1; i < this.layers.length; i += 1) {
+      (this.layers[i] as LayerSlot).canvas.remove();
+    }
+    bottom.patches = [];
+    bottom.redoPatches = [];
+    bottom.visible = true;
+    bottom.opacity = 1;
+    bottom.canvas.style.display = "none";
+    this.layers = [bottom];
+    this.activeIndex = 0;
+
+    // アクティブ(この 1 枚)の画素の実体は this.canvas 側に置く決まりなので、
+    // 合成結果をそこへ描き直す。bottom.canvas(控え側)は次に切り替えるまで
+    // 古いままで構わない(restack() が毎回 display:none にする約束のため)。
+    this.ctx.clearRect(0, 0, this.width, this.height);
+    this.ctx.drawImage(flat, 0, 0);
+    this.patches = [];
+    this.redoPatches = [];
+    this.strokes.clear();
+    this.syncBackup({ x: 0, y: 0, width: this.width, height: this.height });
+    this.restack();
   }
 
   // --- 道具 -------------------------------------------------------------

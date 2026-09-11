@@ -13,6 +13,10 @@
 //
 // どのかさねを消そうとしているかは字ではなく絵(帯の札と同じサムネイル)で示す。
 // これも「字が読めなくても分かる」を優先する、このアプリ全体の作法に合わせたもの。
+//
+// 見た目(サムネイル付き・大きく離した2ボタン)と閉じ方(外側タップ/Esc)は「けす」に
+// 限らず使い回せるので、文言だけ差し替えられるようにしてある(パラパラを始める前の
+// 「かさねをまとめる」確かめが main.ts から別インスタンスとして使っている)。
 import type { LabelPart } from "../core/tools.ts";
 import { renderRuby } from "./label.ts";
 
@@ -24,7 +28,14 @@ export interface RemoveLayerConfirmHandlers {
 /** 呼び出し側が Surface.drawLayerThumbnail 等で canvas に絵を書き込むための窓口。 */
 export type ThumbnailRenderer = (canvas: HTMLCanvasElement) => void;
 
-const TEXT = {
+/** 文言一式。省略した部分は既定(「けしますか？」の文言)を使う。 */
+export interface RemoveLayerConfirmText {
+  message?: LabelPart[];
+  confirm?: LabelPart[];
+  cancel?: LabelPart[];
+}
+
+const DEFAULT_TEXT = {
   // 漢字が無い文言だが、他の UI 文言と同じく必ず renderRuby() を通す(L3 切替時の
   // 扱いを他と揃えるため。renderRuby はふりがな無しの部分をそのまま文字にする)。
   message: [{ base: "けしますか？" }],
@@ -40,7 +51,7 @@ export class RemoveLayerConfirm {
   private targetId: string | null = null;
   private keydownListener: ((event: KeyboardEvent) => void) | null = null;
 
-  constructor(parent: HTMLElement, handlers: RemoveLayerConfirmHandlers) {
+  constructor(parent: HTMLElement, handlers: RemoveLayerConfirmHandlers, text: RemoveLayerConfirmText = {}) {
     this.handlers = handlers;
 
     this.backdrop = document.createElement("div");
@@ -59,7 +70,7 @@ export class RemoveLayerConfirm {
 
     const message = document.createElement("p");
     message.className = "remove-confirm-message";
-    message.appendChild(renderRuby(TEXT.message));
+    message.appendChild(renderRuby(text.message ?? DEFAULT_TEXT.message));
     this.dialog.appendChild(message);
 
     // 消そうとしているかさねの絵。帯の札(.layer-tile-thumb)と同じ役割なので
@@ -74,13 +85,13 @@ export class RemoveLayerConfirm {
     // 安全側の「やめる」を先(左)に置き、指の動線が短い側に取り返しのつく方を置く。
     const cancelButton = document.createElement("button");
     cancelButton.className = "remove-confirm-cancel";
-    cancelButton.appendChild(renderRuby(TEXT.cancel));
+    cancelButton.appendChild(renderRuby(text.cancel ?? DEFAULT_TEXT.cancel));
     cancelButton.addEventListener("click", () => this.cancel());
     buttons.appendChild(cancelButton);
 
     const confirmButton = document.createElement("button");
     confirmButton.className = "remove-confirm-confirm";
-    confirmButton.appendChild(renderRuby(TEXT.confirm));
+    confirmButton.appendChild(renderRuby(text.confirm ?? DEFAULT_TEXT.confirm));
     confirmButton.addEventListener("click", () => this.confirm());
     buttons.appendChild(confirmButton);
 

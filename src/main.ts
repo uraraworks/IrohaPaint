@@ -327,6 +327,12 @@ class App {
   private layerStrip!: LayerStrip;
   private layerStripVisible = false;
   private removeLayerConfirm!: RemoveLayerConfirm;
+  /**
+   * パラパラを始める前、かさねが 2 枚以上あるときだけ出す「まとめるよ」の確かめ。
+   * removeLayerConfirm と見た目・閉じ方は同じだが、消すかさねの id ではなく
+   * 「まとめてよいか」を聞くだけなので、確認先は別インスタンスにする。
+   */
+  private flattenLayersConfirm!: RemoveLayerConfirm;
 
   /**
    * 塗り方。既定は「かこみ」(色の境界まで)。
@@ -688,6 +694,22 @@ class App {
         // (guide.ts 同様、キャンセルは「何も起きなかった」ことが伝わる方が安全)。
       },
     });
+    // パラパラを始める確かめ。「けす」と違って対象の id を持たないので、
+    // onConfirm の引数(RemoveLayerConfirm.show に渡した id)は使わない。
+    this.flattenLayersConfirm = new RemoveLayerConfirm(
+      this.stage,
+      {
+        onConfirm: () => void this.startFlipbook(),
+        onCancel: () => {
+          // 「やめる」と同じ扱い。何も変えない・音も鳴らさない。
+        },
+      },
+      {
+        message: [{ base: "かさねを 1まいに まとめるよ" }],
+        confirm: [{ base: "まとめる" }],
+        cancel: [{ base: "やめる" }],
+      },
+    );
   }
 
   private createSwatches(colors: readonly string[], className: string): HTMLElement {
@@ -785,6 +807,9 @@ class App {
   private applyWorkPaper(): void {
     this.paperKind = this.work?.paperKind ?? "plain";
     this.syncPaperLayer();
+    // 作品が切り替わる経路(openWork/createWork/trashWork/revertTo/restore)は
+    // すべてここを通るので、パラパラ中の「かさね」休ませをまとめて乗せる。
+    this.syncFlipbookButtons();
   }
 
   /**
@@ -1304,6 +1329,8 @@ class App {
     this.syncFillModes();
     this.syncMultiDraw();
     this.syncToolbarArrows();
+    // ボタンを作り直したので、パラパラ中の見た目(is-dim/is-active)も揃え直す。
+    this.syncFlipbookButtons();
   }
 
   private createToolButton(id: ToolId): HTMLElement {
@@ -1430,6 +1457,9 @@ class App {
         this.setLayerStripVisible(!this.layerStripVisible);
         this.sound.play(this.layerStripVisible ? "fanfare" : "poko");
         break;
+      case "flipbook":
+        this.onFlipbookButton();
+        break;
       case "works":
         void this.openGallery();
         break;
@@ -1478,6 +1508,61 @@ class App {
     this.buttons.get("layers")?.classList.toggle("is-active", visible);
     // 閉じている間の変化(描く・undo等)を取りこぼさないよう、開いた瞬間に必ず最新へ揃える。
     if (visible) this.syncLayerStrip();
+  }
+
+  /**
+   * 「パラパラ」ボタン。docs/animation.md「パラパラの開始」。
+   * かさねが 2 枚以上ある作品では、まとめてよいか一度だけ確かめてから始める
+   * (1 枚ならそのまま始まる)。既に パラパラ の作品では今は何もしない
+   * (手順4でここをコマの帯の出し入れにする)。
+   */
+  private onFlipbookButton(): void {
+    if (this.work?.animation === true) return;
+    if (this.surface.layerCount > 1) {
+      const { width, height } = this.layerThumbnailSize();
+      this.flattenLayersConfirm.show("flatten", width, (canvas) => this.surface.drawCompositeThumbnail(canvas));
+      return;
+    }
+    void this.startFlipbook();
+  }
+
+  /**
+   * パラパラを開始する。かさねを見えているものだけの 1 枚にまとめ、作品を
+   * animation:true にする。手順は docs/animation.md の順番のまま:
+   *  ①途中の描き込みを保存 → ②まとめる直前を控える → ③まとめる →
+   *  ④animation を立てる → ⑤かさねの帯を閉じる → ⑥まとめた絵を保存 → ⑦ボタンを揃える → ⑧音
+   */
+  private async startFlipbook(): Promise<void> {
+    // 作品がまだ無い(this.work === null)ときも、この save() が空の作品を作ってから進む。
+    await this.save();
+    // まとめる直前の姿を控える。隠していたかさねは flattenVisibleLayers() で消えるが、
+    // ここで撮った控え(SnapshotReason "flatten")が「前に戻す」の受け皿になる。
+    await this.captureSnapshot("flatten");
+    this.surface.flattenVisibleLayers();
+    if (this.work === null) return; // 型のため。直前の save() で必ず作られている。
+    this.work = { ...this.work, animation: true };
+    // 1 コマ 1 枚の約束を画面でも守るため、開いていたら閉じる。
+    this.setLayerStripVisible(false);
+    // まとめた絵を今の姿として焼き直すため(flattenVisibleLayers() は scheduleSave() を通らない)。
+    this.dirty = true;
+    await this.save();
+    this.syncHistoryButtons();
+    this.syncFlipbookButtons();
+    this.sound.play("fanfare");
+  }
+
+  /**
+   * パラパラ中は「かさね」ボタンを休ませ、「パラパラ」ボタンを選ばれている見た目にする
+   * (docs/animation.md「パラパラ中は「かさね」ボタンを休ませる」。1 コマ 1 枚の約束を
+   * 画面でも守るための同期)。作品が切り替わる全経路は applyWorkPaper() を必ず通る
+   * (openWork/createWork/trashWork/revertTo/restore が呼んでいる共通の入口)ので、
+   * そこと、ツールバーを描き直した後(renderToolbar)、パラパラを始めた直後
+   * (startFlipbook)から呼ぶ。
+   */
+  private syncFlipbookButtons(): void {
+    const inFlipbook = this.work?.animation === true;
+    this.setHistoryButtonEnabled("layers", !inFlipbook);
+    this.buttons.get("flipbook")?.classList.toggle("is-active", inFlipbook);
   }
 
   /**
@@ -2419,8 +2504,12 @@ class App {
     this.sound.play("shu");
   }
 
-  /** ボタン要素は素の <button> なので、disabled 属性そのものを使って押せなくする。 */
-  private setHistoryButtonEnabled(id: "undo" | "redo", enabled: boolean): void {
+  /**
+   * ボタン要素は素の <button> なので、disabled 属性そのものを使って押せなくする。
+   * 元は「戻る/進む」専用だったが、パラパラ中に「かさね」を休ませるのにも同じ見た目
+   * (is-dim + disabled)が要るため、id は ToolId 全般を受けられるようにしてある。
+   */
+  private setHistoryButtonEnabled(id: ToolId, enabled: boolean): void {
     const button = this.buttons.get(id);
     if (button === undefined) return;
     button.classList.toggle("is-dim", !enabled);

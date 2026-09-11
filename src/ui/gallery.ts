@@ -69,6 +69,7 @@ const TEXT = {
   revert: [{ base: "これに" }, { base: "戻", ruby: "もど" }, { base: "す" }],
   opened: [{ base: "ひらいた とき" }],
   reverted: [{ base: "戻", ruby: "もど" }, { base: "す まえ" }],
+  flattened: [{ base: "まとめる まえ" }],
   noHistory: [{ base: "まだ ありません" }],
   nowMark: [{ base: "今", ruby: "いま" }],
   restore: [{ base: "取", ruby: "と" }, { base: "り" }, { base: "戻", ruby: "もど" }, { base: "す" }],
@@ -248,6 +249,7 @@ export class Gallery {
     note.className = "gallery-note";
     if (snapshot.reason === "open") note.appendChild(renderRuby(TEXT.opened));
     else if (snapshot.reason === "revert") note.appendChild(renderRuby(TEXT.reverted));
+    else if (snapshot.reason === "flatten") note.appendChild(renderRuby(TEXT.flattened));
 
     const action = createLabeledButton("gallery-action", RESTORE_SVG, TEXT.revert);
     action.addEventListener("click", () => this.handlers.onRevert(workId, snapshot.id));

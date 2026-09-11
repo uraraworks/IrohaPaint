@@ -202,14 +202,16 @@ export interface WorkSnapshot {
   thumbnail?: Blob;
   /**
    * なぜ残したか。
-   * open   = 誰かが作品をひらいた直後(＝描き始める前の姿)。上書き事故の復旧はこれが要
-   * auto   = 描いている途中の定期保存
-   * revert = 巻き戻す直前の姿(巻き戻し自体を取り消せるようにする)
+   * open    = 誰かが作品をひらいた直後(＝描き始める前の姿)。上書き事故の復旧はこれが要
+   * auto    = 描いている途中の定期保存
+   * revert  = 巻き戻す直前の姿(巻き戻し自体を取り消せるようにする)
+   * flatten = かさねを 1 枚にまとめる(パラパラを始める)直前の姿。隠していたかさねは
+   *           まとめると消えるので、ここで撮った控えが「前に戻す」での唯一の受け皿になる
    */
   reason: SnapshotReason;
 }
 
-export type SnapshotReason = "open" | "auto" | "revert";
+export type SnapshotReason = "open" | "auto" | "revert" | "flatten";
 
 export interface WorkRecord {
   id: string;
