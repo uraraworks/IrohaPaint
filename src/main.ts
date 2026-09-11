@@ -328,6 +328,23 @@ class App {
   private layerStripVisible = false;
   private removeLayerConfirm!: RemoveLayerConfirm;
   /**
+   * コマの帯(docs/animation.md 手順4a)。かさねの帯と同じ LayerStrip を、コマ向けの
+   * options(order:"top-down" 等)で別インスタンスとして使う。パラパラ中の作品だけが持ち、
+   * かさねの帯とは同時に出さない(1 コマ 1 枚の約束、syncFlipbookButtons が「かさね」
+   * ボタン自体を休ませているのと同じ理由)。
+   */
+  private frameStrip!: LayerStrip;
+  private frameStripVisible = false;
+  /** コマの帯の切り替え・追加が二重に走らないようにするガード(連打・非同期処理中の再入防止)。 */
+  private frameBusy = false;
+  /**
+   * 「今のコマ以外」の札の絵(PageData.image から作る ImageBitmap)のキャッシュ。
+   * versionId をキーにする(中身が変わったら必ず別 versionId になる規則、docs/page-versions.md)
+   * ので、キーが同じなら描き直さなくてよい。作品が切り替わったら(applyWorkPaper())
+   * 中身をすべて close() して捨てる(古い作品の画像を握ったままにしない)。
+   */
+  private readonly frameThumbCache = new Map<string, ImageBitmap>();
+  /**
    * パラパラを始める前、かさねが 2 枚以上あるときだけ出す「まとめるよ」の確かめ。
    * removeLayerConfirm と見た目・閉じ方は同じだが、消すかさねの id ではなく
    * 「まとめてよいか」を聞くだけなので、確認先は別インスタンスにする。
@@ -710,6 +727,45 @@ class App {
         cancel: [{ base: "やめる" }],
       },
     );
+
+    // コマの帯(手順4a)。かさねの帯と同じ場所・同じ触り方(LayerStrip)を、コマ向けの
+    // options で流用する。並べ替え・けす・24の上限は 4b(次回)なので、いまは
+    // allowRemove/allowReorder を false にして出さない/効かないままにしておく。
+    this.frameStrip = new LayerStrip(
+      this.stage,
+      {
+        onSelect: (id) => void this.selectFrame(id),
+        onToggleVisible: () => {
+          // allowToggleVisible:false で使うので実際には呼ばれない(コマ自体を隠す概念が無いため)。
+        },
+        onReorder: () => {
+          // allowReorder:false で使うので実際には呼ばれない(4b で有効にする)。
+        },
+        onAdd: () => void this.addFrame(),
+        onRemove: () => {
+          // allowRemove:false で使うので実際には呼ばれない(4b で有効にする)。
+        },
+        onDragLift: () => {
+          // allowReorder:false のため実際には呼ばれない。
+        },
+        onDragEnd: () => {
+          // allowReorder:false のため実際には呼ばれない。
+        },
+      },
+      {
+        order: "top-down",
+        allowToggleVisible: false,
+        showNumbers: true,
+        addPosition: "end",
+        allowRemove: false,
+        allowReorder: false,
+        className: "is-frames",
+        text: {
+          add: [{ base: "＋" }, { base: "コマを" }, { base: "ふやす" }],
+          select: [{ base: "この" }, { base: "コマに" }, { base: "きりかえる" }],
+        },
+      },
+    );
   }
 
   private createSwatches(colors: readonly string[], className: string): HTMLElement {
@@ -810,6 +866,17 @@ class App {
     // 作品が切り替わる経路(openWork/createWork/trashWork/revertTo/restore)は
     // すべてここを通るので、パラパラ中の「かさね」休ませをまとめて乗せる。
     this.syncFlipbookButtons();
+    // 切り替え前の作品の札の絵(ImageBitmap)を握ったままにしない。
+    this.clearFrameThumbCache();
+    // パラパラの作品を開いたらコマの帯を出し、そうでなければ必ず閉じる
+    // (layerStripVisible と同じく、開けっぱなしのまま別の作品を開く事故を作らないため)。
+    this.setFrameStripVisible(this.work?.animation === true);
+  }
+
+  /** frameThumbCache の中身をすべて閉じて空にする(古い作品の画像を握ったままにしない)。 */
+  private clearFrameThumbCache(): void {
+    for (const bitmap of this.frameThumbCache.values()) bitmap.close();
+    this.frameThumbCache.clear();
   }
 
   /**
@@ -1511,13 +1578,27 @@ class App {
   }
 
   /**
+   * コマの帯の出し入れ。状態は保存しない(layerStripVisible と同じ考え方。
+   * 次に開いたときは必ず閉じた状態から始める)。
+   */
+  private setFrameStripVisible(visible: boolean): void {
+    this.frameStripVisible = visible;
+    this.frameStrip.setVisible(visible);
+    if (visible) void this.syncFrameStrip();
+  }
+
+  /**
    * 「パラパラ」ボタン。docs/animation.md「パラパラの開始」。
    * かさねが 2 枚以上ある作品では、まとめてよいか一度だけ確かめてから始める
-   * (1 枚ならそのまま始まる)。既に パラパラ の作品では今は何もしない
-   * (手順4でここをコマの帯の出し入れにする)。
+   * (1 枚ならそのまま始まる)。既に パラパラ の作品では、コマの帯を出し入れする
+   * トグルにする(手順4a。「かさね」ボタンと同じ音の作法)。
    */
   private onFlipbookButton(): void {
-    if (this.work?.animation === true) return;
+    if (this.work?.animation === true) {
+      this.setFrameStripVisible(!this.frameStripVisible);
+      this.sound.play(this.frameStripVisible ? "fanfare" : "poko");
+      return;
+    }
     if (this.surface.layerCount > 1) {
       const { width, height } = this.layerThumbnailSize();
       this.flattenLayersConfirm.show("flatten", width, (canvas) => this.surface.drawCompositeThumbnail(canvas));
@@ -1548,6 +1629,8 @@ class App {
     await this.save();
     this.syncHistoryButtons();
     this.syncFlipbookButtons();
+    // パラパラを始めた直後はコマの帯を出す(docs/animation.md「コマの帯」)。
+    this.setFrameStripVisible(true);
     this.sound.play("fanfare");
   }
 
@@ -2384,6 +2467,9 @@ class App {
     // 履歴が動くタイミングがすべてこの syncHistoryButtons() を通る(main.ts 内を grep 済み)ので、
     // 同じ入口に乗せておけば取りこぼしが無い。常時再描画はしない(描き心地に響くため)。
     this.syncLayerStrip();
+    // コマの帯も同じ入口に乗せる。ただし見えているときだけ(syncLayerStrip と違い、
+    // こちらは他コマの PNG を毎回 createImageBitmap するコストがあるため)。
+    if (this.frameStripVisible) void this.syncFrameStrip();
   }
 
   /**
@@ -2401,6 +2487,62 @@ class App {
         canvas.height = height;
       }
       this.surface.drawLayerThumbnail(id, canvas);
+    });
+  }
+
+  /**
+   * コマの帯を今の作品(pages)の状態へ合わせる。かさねの帯(syncLayerStrip)と同じ形だが、
+   * こちらは「見えているもの」ではなく WorkRecord.pages(消えていないもの)が並びの源。
+   * 札の絵は、今開いているコマは Surface の今の姿(描いた線がすぐ出るように)、
+   * それ以外のコマは PageData.image(前回 save() した合成済み PNG)から作る。
+   */
+  private async syncFrameStrip(): Promise<void> {
+    const work = this.work;
+    if (work === null) return;
+    const pages = work.pages.filter((page) => !page.deleted);
+    const activeId = currentPageOf(work)?.id;
+    const items: LayerStripItem[] = pages.map((page) => ({
+      id: page.id,
+      // かさねの見せる/隠すの概念をコマは持たない(allowToggleVisible:false)ので、
+      // ここは常に true/1 で固定する(LayerStripItem の型を再利用しているだけ)。
+      visible: true,
+      opacity: 1,
+      active: page.id === activeId,
+    }));
+    this.frameStrip.sync(items, (id, canvas) => {
+      const { width, height } = this.layerThumbnailSize();
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      if (id === activeId) {
+        this.surface.drawCompositeThumbnail(canvas);
+        return;
+      }
+      const page = pages.find((p) => p.id === id);
+      if (page !== undefined) this.drawFramePageThumbnail(page, canvas);
+    });
+  }
+
+  /**
+   * 「今のコマ以外」の札 1 枚ぶんの絵を描く。PageData.image(PNG Blob)を
+   * createImageBitmap で読んでから Surface.drawImageThumbnail() で縮小する。
+   * 読み込みは非同期なので、呼んだ時点ではまだ描けない。frameThumbCache に
+   * versionId でキャッシュし、無ければ読み終わった後にその canvas がまだ DOM に
+   * あれば描く(sync() が札を作り直していたら古い canvas なので描かない)。
+   */
+  private drawFramePageThumbnail(page: PageData, canvas: HTMLCanvasElement): void {
+    const cached = this.frameThumbCache.get(page.versionId);
+    if (cached !== undefined) {
+      this.surface.drawImageThumbnail(cached, canvas);
+      return;
+    }
+    void createImageBitmap(page.image).then((bitmap) => {
+      this.frameThumbCache.set(page.versionId, bitmap);
+      // 読み終わる頃には作品が切り替わっている/帯が閉じている/この canvas が
+      // 差し替えられていることがある。まだ画面に居る canvas にだけ描く。
+      if (!this.frameStripVisible || !canvas.isConnected) return;
+      this.surface.drawImageThumbnail(bitmap, canvas);
     });
   }
 
@@ -2502,6 +2644,84 @@ class App {
     if (!this.surface.removeLayer(id)) return;
     this.afterHistoryChange();
     this.sound.play("shu");
+  }
+
+  /**
+   * コマの帯の札を押して、そのコマへ切り替える(docs/animation.md「コマの帯」)。
+   * frameBusy で連打・非同期処理中の再入を防ぐ(切り替えの途中でもう一度押されると
+   * activePageId の付け替えと保存が入り乱れて絵を取り違える事故になるため)。
+   *
+   * 手順の順番は厳守: ①今のコマのうちに描きかけを保存 → ②activePageId を切り替え先へ
+   * → ③切り替え先の絵を描き戻す(undo履歴も捨てる=「戻る」は今のコマの中だけ)
+   * → ④activePageId だけが変わったので焼き直さずに書く(setPaperKind と同じ作法)。
+   * ①を後にすると、まだ activePageId が切り替え先を向いている間に保存が走り、
+   * 今の絵(切り替え元のもの)が切り替え先のコマへ焼かれてしまう。
+   */
+  private async selectFrame(id: string): Promise<void> {
+    if (this.frameBusy) return;
+    if (this.work === null) return;
+    if (currentPageOf(this.work)?.id === id) return; // 今のコマの再タップは何もしない。
+    this.frameBusy = true;
+    try {
+      await this.save(); // ①
+      if (this.work === null) return; // 型のための保険。save() の間に作品が消えることは無い想定。
+      this.work = { ...this.work, activePageId: id }; // ②
+      const page = currentPageOf(this.work);
+      if (page === undefined) return;
+      await this.restorePage(page); // ③
+      void this.store.put(this.work); // ④
+      this.syncHistoryButtons();
+      this.sound.play("poko");
+    } finally {
+      this.frameBusy = false;
+    }
+  }
+
+  /**
+   * 「＋コマをふやす」。今のコマのすぐ後ろに白紙のコマを足し、そのコマへ移る
+   * (docs/animation.md「コマの帯」)。上限(24)は手順4b(次回)で入れるので、いまは無し。
+   * frameBusy は selectFrame と共用(コマの構成を書き換える処理同士の再入を防ぐ)。
+   *
+   * 手順: ①今のコマの描きかけを保存 → ②白紙にする(Surface.reset())→
+   * ③白紙を焼いて新しい PageData を作る → ④今のコマのすぐ後ろに差し込み、
+   * activePageId を新しいコマに → ⑤既に焼いてあるので save() は通さず、
+   * dirty も立てないまま store.put(setPaperKind と同じ作法)。
+   */
+  private async addFrame(): Promise<void> {
+    if (this.frameBusy) return;
+    if (this.work === null) return;
+    this.frameBusy = true;
+    try {
+      await this.save(); // ①
+      if (this.work === null) return;
+      const currentId = currentPageOf(this.work)?.id;
+      this.surface.reset(); // ②
+
+      const pageId = createId("page"); // ③
+      const image = await this.surface.toPng();
+      const layerImages = await this.surface.toLayerImages();
+      const layers = layerImages.map((layer) => ({ ...layer, deleted: false }));
+      const newPage: PageData = {
+        id: pageId,
+        image,
+        deleted: false,
+        layers,
+        activeLayerId: this.surface.activeLayerId,
+        versionId: createId("ver"),
+      };
+
+      const insertAt = this.work.pages.findIndex((p) => p.id === currentId); // ④
+      const pages = [...this.work.pages];
+      pages.splice(insertAt === -1 ? pages.length : insertAt + 1, 0, newPage);
+      this.work = { ...this.work, pages, activePageId: pageId, updatedAt: Date.now() };
+
+      this.dirty = false; // ⑤ 既に焼いてあるので save() は通さない。
+      await this.store.put(this.work);
+      this.syncHistoryButtons();
+      this.sound.play("poko");
+    } finally {
+      this.frameBusy = false;
+    }
   }
 
   /**

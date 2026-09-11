@@ -12,6 +12,7 @@
 // (このモジュールは Surface を知らなくてよい形にしておく)。
 import { plainText, renderRuby } from "./label.ts";
 import { NEW_PAGE_SVG } from "./icons.ts";
+import type { LabelPart } from "../core/tools.ts";
 
 /** 帯の 1 枚ぶんの状態。Surface.layerList の要素とそのまま渡し合える形にしてある。 */
 export interface LayerStripItem {
@@ -45,14 +46,74 @@ export interface LayerStripHandlers {
 /** 帯の中の絵を書き込ませるための窓口。呼び出し側が Surface.drawLayerThumbnail() 等を呼ぶ。 */
 export type ThumbnailRenderer = (id: string, canvas: HTMLCanvasElement) => void;
 
-const TEXT = {
+/** 帯に出す言葉。かさねの帯とコマの帯で言い回しを差し替えられるよう、options.text で上書きできる。 */
+export interface LayerStripText {
+  add: readonly LabelPart[];
+  remove: readonly LabelPart[];
+  select: readonly LabelPart[];
+  show: readonly LabelPart[];
+  hide: readonly LabelPart[];
+}
+
+const DEFAULT_TEXT: LayerStripText = {
   add: [{ base: "＋" }, { base: "ふ" }, { base: "やす" }],
   remove: [{ base: "けす" }],
   select: [{ base: "この" }, { base: "かさねに" }, { base: "きりかえる" }],
   // 選ばれている札をもう一度タップしたときの aria-label(状態に応じて出し分ける)。
   show: [{ base: "この" }, { base: "かさねを" }, { base: "みせる" }],
   hide: [{ base: "この" }, { base: "かさねを" }, { base: "かくす" }],
-} as const;
+};
+
+/**
+ * LayerStrip の見た目・振る舞いを呼び出し側ごとに変えるための任意設定。
+ * かさねの帯(既定値のまま使う)とコマの帯(手順4)で共有するために足した。
+ * 省略した項目は全部かさねの帯の今までどおりの既定値になる。
+ */
+export interface LayerStripOptions {
+  /**
+   * 表示順。"bottom-up"(既定)は今のかさねの帯どおり、items[0]=一番下を逆順にたどって
+   * 上から表示する(上に見える札が上のかさね)。"top-down" は items の並びのまま
+   * 上から表示する(コマの帯: items[0]=1コマ目が一番上、時間順)。
+   * ドラッグ並べ替え確定時の index 変換もここに合わせる(endDrag 参照)。
+   */
+  order?: "bottom-up" | "top-down";
+  /** 帯の文言。指定した項目だけ既定値(かさね向け)を上書きする。 */
+  text?: Partial<LayerStripText>;
+  /** 選ばれている札の再タップで見せる/隠すを切り替えるか。既定 true。false ならその再タップは何もしない。 */
+  allowToggleVisible?: boolean;
+  /** true で札に 1,2,3… の小さな番号を付ける(items の並び順、コマの帯用)。既定 false。 */
+  showNumbers?: boolean;
+  /** 「＋」を帯のどちら側に置くか。既定 "start"(今のかさねの帯どおり、一番上の札のさらに上)。 */
+  addPosition?: "start" | "end";
+  /** 選ばれている札に「けす」を出すか。既定 true。 */
+  allowRemove?: boolean;
+  /** ドラッグでの並べ替えを許すか。既定 true。false なら持ち上げ自体を始めない。 */
+  allowReorder?: boolean;
+  /** ルート要素に足す修飾クラス(かさね/コマの帯を CSS で区別するため)。 */
+  className?: string;
+}
+
+interface ResolvedLayerStripOptions {
+  order: "bottom-up" | "top-down";
+  text: LayerStripText;
+  allowToggleVisible: boolean;
+  showNumbers: boolean;
+  addPosition: "start" | "end";
+  allowRemove: boolean;
+  allowReorder: boolean;
+}
+
+function resolveOptions(options: LayerStripOptions | undefined): ResolvedLayerStripOptions {
+  return {
+    order: options?.order ?? "bottom-up",
+    text: { ...DEFAULT_TEXT, ...options?.text },
+    allowToggleVisible: options?.allowToggleVisible ?? true,
+    showNumbers: options?.showNumbers ?? false,
+    addPosition: options?.addPosition ?? "start",
+    allowRemove: options?.allowRemove ?? true,
+    allowReorder: options?.allowReorder ?? true,
+  };
+}
 
 /** 指の長押し待ち。長押しが確定する前に動いたらスクロールとみなして諦める(マウスも同じ枠に間借りさせる)。 */
 interface PendingLift {
@@ -86,6 +147,7 @@ export class LayerStrip {
   readonly element: HTMLElement;
   private readonly track: HTMLElement;
   private readonly handlers: LayerStripHandlers;
+  private readonly options: ResolvedLayerStripOptions;
   private pendingLift: PendingLift | null = null;
   private dragState: DragState | null = null;
   private suppressNextClick = false;
@@ -101,10 +163,11 @@ export class LayerStrip {
   // 自動スクロールは「ゆっくり」が要件なので、1フレームあたりの移動量を控えめにする。
   private static readonly AUTOSCROLL_SPEED = 4;
 
-  constructor(parent: HTMLElement, handlers: LayerStripHandlers) {
+  constructor(parent: HTMLElement, handlers: LayerStripHandlers, options?: LayerStripOptions) {
     this.handlers = handlers;
+    this.options = resolveOptions(options);
     this.element = document.createElement("div");
-    this.element.className = "layer-strip";
+    this.element.className = options?.className === undefined ? "layer-strip" : `layer-strip ${options.className}`;
     this.track = document.createElement("div");
     this.track.className = "layer-strip-track";
     this.element.appendChild(this.track);
@@ -158,21 +221,30 @@ export class LayerStrip {
    */
   sync(items: readonly LayerStripItem[], renderThumbnail?: ThumbnailRenderer): void {
     this.track.innerHTML = "";
+    const addTile = this.buildAddTile();
 
-    // 「＋ふやす」は帯の末尾(＝一番上の札のさらに上)に置く。
-    this.track.appendChild(this.buildAddTile());
+    // 「＋ふやす」は既定(addPosition "start")では帯の先頭(＝一番上の札のさらに上)、
+    // "end"(コマの帯)では最後の札の後ろに置く。
+    if (this.options.addPosition === "start") this.track.appendChild(addTile);
 
-    // layerList は下から順(index 0 が一番下)。上から表示したいので逆順にたどる。
-    // 逆順にした並びの先頭(index 0)がいちばん上のかさねになる。
-    const display = [...items].reverse();
+    // bottom-up(かさねの帯の既定): layerList は下から順(index 0 が一番下)。
+    // 上から表示したいので逆順にたどる(逆順にした並びの先頭がいちばん上のかさね)。
+    // top-down(コマの帯): items の並びがそのまま時間順=表示順なので、そのまま使う。
+    const display = this.options.order === "top-down" ? [...items] : [...items].reverse();
     for (const item of display) {
-      const tile = this.buildTile(item, display.length);
+      // 番号は items(呼び出し側の本来の並び=コマの時間順)での位置。表示方向(order)には
+      // 依らない値にしておく(コマの帯は order="top-down" なので display と一致するが、
+      // 将来 order を変えても番号の意味がずれないようにするための保険)。
+      const number = this.options.showNumbers ? items.findIndex((i) => i.id === item.id) + 1 : undefined;
+      const tile = this.buildTile(item, display.length, number);
       this.track.appendChild(tile);
       if (renderThumbnail !== undefined) {
         const canvas = tile.querySelector<HTMLCanvasElement>(".layer-tile-thumb");
         if (canvas !== null) renderThumbnail(item.id, canvas);
       }
     }
+
+    if (this.options.addPosition === "end") this.track.appendChild(addTile);
   }
 
   private buildAddTile(): HTMLElement {
@@ -182,12 +254,12 @@ export class LayerStrip {
     icon.className = "icon";
     icon.innerHTML = NEW_PAGE_SVG;
     button.appendChild(icon);
-    button.setAttribute("aria-label", plainText(TEXT.add));
+    button.setAttribute("aria-label", plainText(this.options.text.add));
     button.addEventListener("click", () => this.handlers.onAdd());
     return button;
   }
 
-  private buildTile(item: LayerStripItem, count: number): HTMLElement {
+  private buildTile(item: LayerStripItem, count: number, number?: number): HTMLElement {
     const tile = document.createElement("div");
     tile.className = "layer-tile";
     tile.classList.toggle("is-active", item.active);
@@ -198,26 +270,42 @@ export class LayerStrip {
 
     // 札の当たり判定は 88px の絵そのものだけ(設計の芯)。押した意味は状態で変わる:
     // 選ばれていない札 → そのかさねへ切り替える。選ばれている札をもう一度 →
-    // そのかさねの見せる/隠すを切り替える。並べ替えはドラッグに一本化してあるので、
-    // 上下ボタン・目のボタンは無い。
+    // そのかさねの見せる/隠すを切り替える(allowToggleVisible=false のとき、この
+    // 再タップは何もしない。コマの帯はコマ自体を隠す概念が無いので false で使う)。
+    // 並べ替えはドラッグに一本化してあるので、上下ボタン・目のボタンは無い。
     const select = document.createElement("button");
     select.className = "layer-tile-select";
-    const label = item.active ? (item.visible ? TEXT.hide : TEXT.show) : TEXT.select;
+    const label =
+      this.options.allowToggleVisible && item.active
+        ? item.visible
+          ? this.options.text.hide
+          : this.options.text.show
+        : this.options.text.select;
     select.setAttribute("aria-label", plainText(label));
     const thumb = document.createElement("canvas");
     thumb.className = "layer-tile-thumb";
     select.appendChild(thumb);
+    if (number !== undefined) {
+      const badge = document.createElement("span");
+      badge.className = "layer-tile-number";
+      badge.textContent = String(number);
+      select.appendChild(badge);
+    }
     select.addEventListener("click", () => {
-      if (item.active) this.handlers.onToggleVisible(item.id);
-      else this.handlers.onSelect(item.id);
+      if (item.active) {
+        if (this.options.allowToggleVisible) this.handlers.onToggleVisible(item.id);
+      } else {
+        this.handlers.onSelect(item.id);
+      }
     });
     tile.appendChild(select);
 
     // 「けす」も選ばれている札にだけ出す。最後の 1 枚は消せない(Surface.removeLayer と同じ条件)。
-    if (item.active) {
+    // allowRemove=false(コマの帯、手順4b までは出さない)のときはボタン自体を作らない。
+    if (item.active && this.options.allowRemove) {
       const remove = document.createElement("button");
       remove.className = "layer-tile-remove";
-      remove.appendChild(renderRuby(TEXT.remove));
+      remove.appendChild(renderRuby(this.options.text.remove));
       remove.disabled = count <= 1;
       remove.classList.toggle("is-dim", count <= 1);
       remove.addEventListener("click", () => this.handlers.onRemove(item.id));
@@ -258,6 +346,9 @@ export class LayerStrip {
   }
 
   private onTrackPointerDown(event: PointerEvent): void {
+    // コマの帯(4a時点)は allowReorder:false で使う。持ち上げ自体を始めなければ、
+    // 押下はそのまま素の click(select/remove)として通る。
+    if (!this.options.allowReorder) return;
     if (this.dragState !== null || this.pendingLift !== null) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     const target = event.target as HTMLElement;
@@ -476,12 +567,15 @@ export class LayerStrip {
     }, 0);
 
     if (commit && finalIndexFromTop !== state.originalIndex) {
-      // finalIndexFromTop は「上から何番目か」(0が一番上)。Surface.moveLayer の約束
-      // (0が一番下)へ変換するには、全体の枚数から引いて逆順にする必要がある
-      // (この帯は上が上のかさね=表示順と index の向きが逆、というこのファイル冒頭の
-      // 注意点そのもの。ここを間違えると重なり順が反転する)。
+      // finalIndexFromTop は「上から何番目か」(0が一番上)。
+      // bottom-up(かさねの帯): Surface.moveLayer の約束(0が一番下)へ変換するには、
+      // 全体の枚数から引いて逆順にする必要がある(この帯は上が上のかさね=表示順と
+      // index の向きが逆、というこのファイル冒頭の注意点そのもの。間違えると重なり順が反転する)。
+      // top-down(コマの帯): 表示順がそのまま items の並び順なので、変換は不要
+      // (現状 allowReorder:false で使うため実際には呼ばれない。4b で使う際の下ごしらえ)。
       const total = state.others.length + 1;
-      this.handlers.onReorder(state.id, total - 1 - finalIndexFromTop);
+      const toIndex = this.options.order === "top-down" ? finalIndexFromTop : total - 1 - finalIndexFromTop;
+      this.handlers.onReorder(state.id, toIndex);
     }
   }
 }

@@ -1023,6 +1023,18 @@ export class Surface {
   }
 
   /**
+   * 任意の画像(ImageBitmap 等)を、drawLayerThumbnail/drawCompositeThumbnail と同じ
+   * 縮尺・レターボックス・段階縮小の作法で小さく描き写す(コマの帯の札用)。
+   * コマの帯は「今のコマ以外」は合成済み PNG(PageData.image)を読んで描くので、
+   * this.layers/composite() を経由しない、この Surface の外から渡された画像を描ける
+   * 窓口が要る。drawScaledThumbnail() 自体は元々 CanvasImageSource を受けるだけの
+   * 関数なので、公開ラッパを足すだけで足りる。
+   */
+  drawImageThumbnail(source: CanvasImageSource, target: HTMLCanvasElement): void {
+    this.drawScaledThumbnail(source, target);
+  }
+
+  /**
    * 縮小して小さい canvas へ描く共通処理(drawLayerThumbnail / drawCompositeThumbnail で共用)。
    * かさねは透過なので、紙の色を敷いてから描かないと札が真っ白で何も見えない
    * (toThumbnail() が合成結果の前に紙色を敷いているのと同じ理由)。

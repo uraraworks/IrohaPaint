@@ -652,6 +652,31 @@ body {
   height: 100%;
 }
 
+/* コマの帯(.is-frames)の番号。showNumbers:true のときだけ layerStrip.ts が足す。
+   絵の上に重ねるだけの小さな丸(新しい色は増やさず、既存の accent/ink を流用)。 */
+.layer-tile-number {
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* 番号バッジを絵の左上に重ねるための基準(.layer-tile-select は元々 overflow:hidden の
+   ブロックなので position:relative を足すだけで足りる)。 */
+.is-frames .layer-tile-select {
+  position: relative;
+}
+
 /* 効かない状態(最後の1枚)。「戻る/進む」と同じ作法
    (disabled 属性で実際に押せなくした上で、見た目も薄くする)。 */
 .layer-tile-remove.is-dim {
