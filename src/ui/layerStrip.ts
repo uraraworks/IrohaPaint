@@ -151,6 +151,13 @@ export class LayerStrip {
   private pendingLift: PendingLift | null = null;
   private dragState: DragState | null = null;
   private suppressNextClick = false;
+  /**
+   * 「＋」を薄く見せるか(コマの帯、24 の上限)。押せなくはしない(押すと上限の声かけを
+   * 出したいので disabled にはしない。docs/animation.md「決めたこと」)。sync() で
+   * 札を組み直すたびに buildAddTile() が this.addDimmed を読むので、setAddDimmed() を
+   * 呼んだ後は sync() を挟んでも消えずに保たれる。
+   */
+  private addDimmed = false;
 
   // 指は 400ms 程度の長押しで持ち上げる(帯の縦スクロールと縦ドラッグが同じ指の動きなので、
   // 「動かさずに待つ」ことで区別する)。マウスは installHScrollDrag と同じ 4px 閾値。
@@ -212,6 +219,12 @@ export class LayerStrip {
     this.element.classList.toggle("is-visible", visible);
   }
 
+  /** 「＋」を薄く見せる(押せるまま)。sync() で札を組み直しても保たれる。 */
+  setAddDimmed(dimmed: boolean): void {
+    this.addDimmed = dimmed;
+    this.track.querySelector(".layer-strip-add")?.classList.toggle("is-dim", dimmed);
+  }
+
   /**
    * 一覧を渡して札を組み直す。renderThumbnail が渡されたときは、組み直した直後に
    * 札ごとの canvas へ絵を書き込ませる(呼び出し側が Surface.drawLayerThumbnail を呼ぶ)。
@@ -254,6 +267,7 @@ export class LayerStrip {
     icon.className = "icon";
     icon.innerHTML = NEW_PAGE_SVG;
     button.appendChild(icon);
+    button.classList.toggle("is-dim", this.addDimmed);
     button.setAttribute("aria-label", plainText(this.options.text.add));
     button.addEventListener("click", () => this.handlers.onAdd());
     return button;

@@ -574,6 +574,11 @@ body {
   transform: scale(0.9);
 }
 
+/* コマの帯、24の上限。「けす」の is-dim と違い disabled にはしない(押すと声かけが出る)。 */
+.layer-strip-add.is-dim {
+  opacity: 0.35;
+}
+
 .layer-strip-add .icon svg {
   width: 34px;
   height: 34px;

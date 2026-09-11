@@ -23,6 +23,13 @@ export const CANVAS_WIDTH = 1748;
 export const CANVAS_HEIGHT = 1181;
 
 /**
+ * コマ(パラパラの 1 コマ = 1 ページ)の上限。docs/animation.md「決めたこと」。
+ * かさねの SOFT_LAYER_LIMIT(surface.ts)と違い、こちらは各コマがまるごと 1 枚の
+ * PageData(レイヤー込み)を持つので容量が効く、本物の上限として扱う。
+ */
+export const FRAME_LIMIT = 24;
+
+/**
  * アイロンビーズ / ドット絵モードのマス数。
  * 「長辺方向 x 短辺方向」のマス数として持つ(キャンバスの向きに合わせて実際の
  * cols/rows を入れ替えるのは cellGridFor() の仕事)。
@@ -207,11 +214,13 @@ export interface WorkSnapshot {
    * revert  = 巻き戻す直前の姿(巻き戻し自体を取り消せるようにする)
    * flatten = かさねを 1 枚にまとめる(パラパラを始める)直前の姿。隠していたかさねは
    *           まとめると消えるので、ここで撮った控えが「前に戻す」での唯一の受け皿になる
+   * removeFrame = コマを消す直前の姿。消したコマは pages から外れて戻せなくなるので、
+   *           ここで撮った控えが「前に戻す」での唯一の受け皿になる(flatten と同じ理由)
    */
   reason: SnapshotReason;
 }
 
-export type SnapshotReason = "open" | "auto" | "revert" | "flatten";
+export type SnapshotReason = "open" | "auto" | "revert" | "flatten" | "removeFrame";
 
 export interface WorkRecord {
   id: string;

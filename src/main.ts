@@ -19,6 +19,7 @@ import {
   createId,
   createWork,
   currentPageOf,
+  FRAME_LIMIT,
   snapshotOf,
   type CanvasSizeId,
   type CellGrid,
@@ -30,7 +31,7 @@ import { createWorkStore, requestPersistentStorage } from "./core/workStore.ts";
 import { clampPlacement, scaleAt, UNDERLAY_ALPHA, MAX_UNDERLAYS, type UnderlayOpacity, type UnderlayRecord } from "./core/underlay.ts";
 import { importUnderlay, UnderlayImportError, type UnderlayImportErrorCode } from "./core/underlayImport.ts";
 import { createUnderlayStore, pruneUnderlays, type UnderlayStore } from "./core/underlayStore.ts";
-import { hexToRgba, SOFT_LAYER_LIMIT, Surface } from "./core/surface.ts";
+import { hexToRgba, SOFT_LAYER_LIMIT, Surface, thumbnailFromImage } from "./core/surface.ts";
 import { installPointerInput, toCanvasPoint, type GestureChange, type PointerInputControl } from "./core/pointerInput.ts";
 import {
   clampView,
@@ -350,6 +351,8 @@ class App {
    * 「まとめてよいか」を聞くだけなので、確認先は別インスタンスにする。
    */
   private flattenLayersConfirm!: RemoveLayerConfirm;
+  /** コマを消す確かめ(手順4b)。文言は既定(「けしますか？」)のまま、対象だけコマの id にする。 */
+  private removeFrameConfirm!: RemoveLayerConfirm;
 
   /**
    * 塗り方。既定は「かこみ」(色の境界まで)。
@@ -728,9 +731,9 @@ class App {
       },
     );
 
-    // コマの帯(手順4a)。かさねの帯と同じ場所・同じ触り方(LayerStrip)を、コマ向けの
-    // options で流用する。並べ替え・けす・24の上限は 4b(次回)なので、いまは
-    // allowRemove/allowReorder を false にして出さない/効かないままにしておく。
+    // コマの帯(手順4a/4b)。かさねの帯と同じ場所・同じ触り方(LayerStrip)を、コマ向けの
+    // options で流用する。「けす」は直接消さず、まず確かめを挟む(かさねの帯と同じ理由。
+    // removeFrameConfirm 参照)。並べ替えの持ち上げ/落としの音もかさねの帯と揃える。
     this.frameStrip = new LayerStrip(
       this.stage,
       {
@@ -738,27 +741,19 @@ class App {
         onToggleVisible: () => {
           // allowToggleVisible:false で使うので実際には呼ばれない(コマ自体を隠す概念が無いため)。
         },
-        onReorder: () => {
-          // allowReorder:false で使うので実際には呼ばれない(4b で有効にする)。
-        },
+        onReorder: (id, toIndex) => void this.reorderFrame(id, toIndex),
         onAdd: () => void this.addFrame(),
-        onRemove: () => {
-          // allowRemove:false で使うので実際には呼ばれない(4b で有効にする)。
-        },
-        onDragLift: () => {
-          // allowReorder:false のため実際には呼ばれない。
-        },
-        onDragEnd: () => {
-          // allowReorder:false のため実際には呼ばれない。
-        },
+        onRemove: (id) => this.confirmRemoveFrame(id),
+        onDragLift: () => this.sound.play("poko"),
+        onDragEnd: () => this.sound.play("poko"),
       },
       {
         order: "top-down",
         allowToggleVisible: false,
         showNumbers: true,
         addPosition: "end",
-        allowRemove: false,
-        allowReorder: false,
+        allowRemove: true,
+        allowReorder: true,
         className: "is-frames",
         text: {
           add: [{ base: "＋" }, { base: "コマを" }, { base: "ふやす" }],
@@ -766,6 +761,14 @@ class App {
         },
       },
     );
+    // コマを消す確かめ。かさねの removeLayerConfirm とは別インスタンス(既定文言のまま使う。
+    // どのコマを消すかは confirmRemoveFrame 側の id で持つ)。
+    this.removeFrameConfirm = new RemoveLayerConfirm(this.stage, {
+      onConfirm: (id) => void this.removeFrame(id),
+      onCancel: () => {
+        // 「やめる」と同じ扱い。何も変えない・音も鳴らさない。
+      },
+    });
   }
 
   private createSwatches(colors: readonly string[], className: string): HTMLElement {
@@ -2522,6 +2525,8 @@ class App {
       const page = pages.find((p) => p.id === id);
       if (page !== undefined) this.drawFramePageThumbnail(page, canvas);
     });
+    // 24 の上限に達していたら「＋」を薄く見せる(押せるまま。docs/animation.md「決めたこと」)。
+    this.frameStrip.setAddDimmed(pages.length >= FRAME_LIMIT);
   }
 
   /**
@@ -2530,6 +2535,9 @@ class App {
    * 読み込みは非同期なので、呼んだ時点ではまだ描けない。frameThumbCache に
    * versionId でキャッシュし、無ければ読み終わった後にその canvas がまだ DOM に
    * あれば描く(sync() が札を作り直していたら古い canvas なので描かない)。
+   * コマの帯(syncFrameStrip)だけでなく、けすの確かめ(confirmRemoveFrame)からも呼ぶので、
+   * 帯が閉じているかどうかは見ない(canvas.isConnected だけで十分。確かめの canvas は
+   * 帯とは別の DOM に常時ある)。
    */
   private drawFramePageThumbnail(page: PageData, canvas: HTMLCanvasElement): void {
     const cached = this.frameThumbCache.get(page.versionId);
@@ -2539,9 +2547,9 @@ class App {
     }
     void createImageBitmap(page.image).then((bitmap) => {
       this.frameThumbCache.set(page.versionId, bitmap);
-      // 読み終わる頃には作品が切り替わっている/帯が閉じている/この canvas が
-      // 差し替えられていることがある。まだ画面に居る canvas にだけ描く。
-      if (!this.frameStripVisible || !canvas.isConnected) return;
+      // 読み終わる頃には作品が切り替わっている/この canvas が差し替えられていることがある。
+      // まだ画面に居る canvas にだけ描く。
+      if (!canvas.isConnected) return;
       this.surface.drawImageThumbnail(bitmap, canvas);
     });
   }
@@ -2669,7 +2677,7 @@ class App {
       const page = currentPageOf(this.work);
       if (page === undefined) return;
       await this.restorePage(page); // ③
-      void this.store.put(this.work); // ④
+      await this.putFrameWork(this.work); // ④
       this.syncHistoryButtons();
       this.sound.play("poko");
     } finally {
@@ -2679,7 +2687,8 @@ class App {
 
   /**
    * 「＋コマをふやす」。今のコマのすぐ後ろに白紙のコマを足し、そのコマへ移る
-   * (docs/animation.md「コマの帯」)。上限(24)は手順4b(次回)で入れるので、いまは無し。
+   * (docs/animation.md「コマの帯」)。24 の上限に達していたら増やさず、
+   * かさねの SOFT_LAYER_LIMIT(addLayerTile)と同じ作法で軽く知らせるだけにする。
    * frameBusy は selectFrame と共用(コマの構成を書き換える処理同士の再入を防ぐ)。
    *
    * 手順: ①今のコマの描きかけを保存 → ②白紙にする(Surface.reset())→
@@ -2690,6 +2699,14 @@ class App {
   private async addFrame(): Promise<void> {
     if (this.frameBusy) return;
     if (this.work === null) return;
+    // 上限チェックは frameBusy を立てる前に行う(押せるまま、の約束。
+    // frameStrip.setAddDimmed() で「＋」自体は薄く見せているが disabled にはしていないので、
+    // 押されたらここで必ず弾く)。
+    const activeFrameCount = this.work.pages.filter((p) => !p.deleted).length;
+    if (activeFrameCount >= FRAME_LIMIT) {
+      this.guide.show("ここまでだよ", this.frameStrip.element);
+      return;
+    }
     this.frameBusy = true;
     try {
       await this.save(); // ①
@@ -2716,11 +2733,148 @@ class App {
       this.work = { ...this.work, pages, activePageId: pageId, updatedAt: Date.now() };
 
       this.dirty = false; // ⑤ 既に焼いてあるので save() は通さない。
-      await this.store.put(this.work);
+      await this.putFrameWork(this.work);
       this.syncHistoryButtons();
       this.sound.play("poko");
     } finally {
       this.frameBusy = false;
+    }
+  }
+
+  /**
+   * コマの帯の「けす」が押された直後。まだ何も消さず、画面中央に確かめを出す
+   * (removeLayerConfirm/confirmRemoveLayerTile と同じ二段構え)。サムネイルは
+   * 今のコマなら Surface の今の姿(drawCompositeThumbnail)、他のコマは
+   * 一覧の札と同じ描き方(drawFramePageThumbnail、PageData.image から作る)。
+   */
+  private confirmRemoveFrame(id: string): void {
+    const work = this.work;
+    if (work === null) return;
+    const { width, height } = this.layerThumbnailSize();
+    this.removeFrameConfirm.show(id, width, (canvas) => {
+      if (id === currentPageOf(work)?.id) {
+        this.surface.drawCompositeThumbnail(canvas);
+        return;
+      }
+      const page = work.pages.find((p) => p.id === id);
+      if (page !== undefined) this.drawFramePageThumbnail(page, canvas);
+    });
+  }
+
+  /**
+   * 確かめで「けす」が選ばれた後の実処理(docs/animation.md「コマを消す」)。
+   * 最後の 1 コマは LayerStrip 側で「けす」ボタン自体を無効化しているので、
+   * ここへは普通は来ない(念のため下でも同じ条件を見る)。
+   *
+   * 手順は指示書の順番のまま:
+   *  ①frameBusy ガード → ②今の描きかけを保存 → ③消す直前の姿を控える
+   *  (「前に戻す」の受け皿) → ④pages から外す(最後の1コマは消さない) →
+   *  ⑤消したのが今のコマなら、同じ位置の次のコマ(無ければ前のコマ)へ切り替える →
+   *  ⑥表紙が変わっていたら焼き直す → ⑦保存 → ⑧ボタンを揃える・音
+   */
+  private async removeFrame(id: string): Promise<void> {
+    if (this.frameBusy) return; // ①
+    if (this.work === null) return;
+    const work = this.work;
+    const activePages = work.pages.filter((p) => !p.deleted);
+    if (activePages.length <= 1) return; // 最後の1コマは消さない。
+    const removeIndex = activePages.findIndex((p) => p.id === id);
+    if (removeIndex === -1) return;
+
+    this.frameBusy = true;
+    try {
+      await this.save(); // ②
+      if (this.work === null) return;
+      await this.captureSnapshot("removeFrame"); // ③
+      if (this.work === null) return;
+
+      const oldCoverId = this.work.pages.find((p) => !p.deleted)?.id;
+      const wasCurrent = currentPageOf(this.work)?.id === id;
+      const pages = this.work.pages.filter((p) => p.id !== id); // ④
+      this.work = { ...this.work, pages, updatedAt: Date.now() };
+
+      if (wasCurrent) {
+        // ⑤ 消したコマと同じ位置(添字)にいたコマが繰り上がって「次のコマ」になる。
+        // 末尾を消した場合は繰り上がりが無いので、代わりに新しい末尾(=前のコマ)を開く。
+        const remaining = pages.filter((p) => !p.deleted);
+        const nextPage = remaining[removeIndex] ?? remaining[remaining.length - 1];
+        if (nextPage === undefined) return; // 型のための保険(上の length<=1 チェック済み)。
+        this.work = { ...this.work, activePageId: nextPage.id };
+        await this.restorePage(nextPage);
+      }
+
+      const newCoverId = pages.find((p) => !p.deleted)?.id;
+      if (newCoverId !== oldCoverId) await this.refreshCoverThumbnail(); // ⑥
+
+      await this.putFrameWork(this.work); // ⑦
+      this.syncHistoryButtons(); // ⑧
+      this.sound.play("shu");
+    } finally {
+      this.frameBusy = false;
+    }
+  }
+
+  /**
+   * コマの帯のドラッグ並べ替え(docs/animation.md「コマの帯」)。かさねの帯と違い、
+   * 今のコマ自体は動かないので保存(save())は不要 -- 描きかけは dirty のまま残り、
+   * 次の save() が activePageId(=id)で正しいコマへ焼く(setPaperKind と同じ考え方で、
+   * pages の並びだけを直接書き換える)。
+   */
+  private async reorderFrame(id: string, toIndex: number): Promise<void> {
+    if (this.frameBusy) return;
+    if (this.work === null) return;
+    this.frameBusy = true;
+    try {
+      const work = this.work;
+      const oldCoverId = work.pages.find((p) => !p.deleted)?.id;
+      const fromIndex = work.pages.findIndex((p) => p.id === id);
+      if (fromIndex === -1) return;
+      const pages = [...work.pages];
+      const [moved] = pages.splice(fromIndex, 1);
+      if (moved === undefined) return;
+      pages.splice(Math.min(toIndex, pages.length), 0, moved);
+      this.work = { ...work, pages, updatedAt: Date.now() };
+
+      const newCoverId = pages.find((p) => !p.deleted)?.id;
+      if (newCoverId !== oldCoverId) await this.refreshCoverThumbnail();
+
+      await this.putFrameWork(this.work);
+      this.syncHistoryButtons();
+    } finally {
+      this.frameBusy = false;
+    }
+  }
+
+  /**
+   * 表紙(work.thumbnail、一覧に出る絵)を今の pages[0](消えていない最初のページ)の
+   * 絵から作り直す。表紙が今開いているコマなら Surface の今の姿を焼き(save() と同じ
+   * toThumbnail())、そうでなければ表紙の PageData.image から作る(thumbnailFromImage、
+   * surface.ts)。docs/animation.md「表紙サムネイル」。
+   */
+  private async refreshCoverThumbnail(): Promise<void> {
+    if (this.work === null) return;
+    const cover = this.work.pages.find((p) => !p.deleted);
+    if (cover === undefined) return;
+    const thumbnail =
+      cover.id === currentPageOf(this.work)?.id
+        ? await this.surface.toThumbnail()
+        : await thumbnailFromImage(cover.image);
+    if (this.work === null) return; // 型のための保険(await の間に閉じられることは無い想定)。
+    this.work = { ...this.work, thumbnail };
+  }
+
+  /**
+   * コマの構成(pages・activePageId)を書き換えた後の保存。selectFrame/addFrame/
+   * removeFrame/reorderFrame で共用する。失敗しても例外を外へ漏らさず、dirty を立てて
+   * おく -- 次の save()(今のコマの描き込みを焼くついで)が work を丸ごと書き直すので、
+   * ここで取りこぼしたコマの構成もそのとき一緒に書かれる(取りこぼしが残らない)。
+   */
+  private async putFrameWork(work: WorkRecord): Promise<void> {
+    try {
+      await this.store.put(work);
+    } catch (error) {
+      this.dirty = true;
+      console.warn("コマの ほぞんに しっぱいしました", error);
     }
   }
 

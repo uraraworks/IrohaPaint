@@ -1586,6 +1586,37 @@ export class Surface {
 }
 
 /**
+ * 既に焼いてある PNG(PageData.image 等)から一覧用の小さい PNG を作る。
+ * Surface.toThumbnail() と出来上がりを揃える(紙色の下地 + 縮小)ために、
+ * インスタンスを介さずここに置く(呼び出し側が「今開いていないコマ」の表紙サムネイルを
+ * 作り直すのに使う。docs/animation.md「表紙サムネイル」参照。PageData.image は
+ * toPng() で既に紙色が焼き込まれているので下地は本来不要だが、透過のまま渡された
+ * 場合でも同じ出来上がりになるよう toThumbnail() と同じ手順を踏む)。
+ */
+export async function thumbnailFromImage(image: Blob, maxWidth = 360): Promise<Blob> {
+  const bitmap = await createImageBitmap(image);
+  try {
+    const scale = maxWidth / bitmap.width;
+    const small = document.createElement("canvas");
+    small.width = Math.round(bitmap.width * scale);
+    small.height = Math.round(bitmap.height * scale);
+    const ctx = small.getContext("2d");
+    if (ctx === null) throw new Error("2D コンテキストを取得できませんでした");
+    ctx.fillStyle = PAPER_COLOR;
+    ctx.fillRect(0, 0, small.width, small.height);
+    ctx.drawImage(bitmap, 0, 0, small.width, small.height);
+    return await new Promise<Blob>((resolve, reject) => {
+      small.toBlob((blob) => {
+        if (blob === null) reject(new Error("PNG の生成に失敗しました"));
+        else resolve(blob);
+      }, "image/png");
+    });
+  } finally {
+    bitmap.close();
+  }
+}
+
+/**
  * 油絵の毛並みを 1 本のストロークぶん作る。
  * 位置は均等に並べたうえで少しだけ揺らし、端の毛ほど暗く薄くする
  * (絵の具が盛り上がった縁に見える)。
