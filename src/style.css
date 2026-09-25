@@ -1306,10 +1306,11 @@ ruby > rt {
 }
 
 /*
- * 紙(ふつう/わら半紙/キャンバス)の行と、マス(なし/方眼/ビーズ/写真)の行。
- * どちらも中身は 3〜4 個の nib-button で、.underlay-strip / .underlay-opacity-row と
+ * 紙(ふつう/わら半紙/キャンバス)の行と、マス(なし/方眼/ビーズ/写真)の行、
+ * わく(なし/4こま/2だん、docs/manga.md)の行。
+ * どれも中身は 3〜4 個の nib-button で、.underlay-strip / .underlay-opacity-row と
  * 同じ理由(.grid-panel の flex-wrap を使って独立した 1 行にする)で flex-basis: 100%
- * にする。紙とマスは互いに独立した軸なので、どちらの行も同時に選択状態を持てる。
+ * にする。紙・マス・わくは互いに独立した軸なので、3 行とも同時に選択状態を持てる。
  *
  * ツールバー・下敷きの帯と同じく、入りきらないものは横に流す。折り返すとパネルが
  * 縦に伸び、狭い画面では選ぶために絵が見えなくなる。送りボタンは付けない(端を
@@ -1317,7 +1318,8 @@ ruby > rt {
  * .hscroll-track(makeHScrollPanelRow が差し込む)。
  */
 .paper-row,
-.grid-mode-row {
+.grid-mode-row,
+.frame-row {
   position: relative;
   display: flex;
   align-items: center;

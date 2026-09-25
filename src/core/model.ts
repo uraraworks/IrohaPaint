@@ -17,7 +17,7 @@
 //   - ページにもソフトデリートを通す(deleted)。作品と同じ「本当には消さない」規則。
 import type { LabelPart } from "./tools.ts";
 import type { PaperKind } from "./paper.ts";
-import type { FrameData } from "./frame.ts";
+import type { FrameData, FramePresetId } from "./frame.ts";
 
 /** 印刷(ポストカード 148x100mm / 300dpi)を見据えた固定キャンバスサイズ。横向き。 */
 export const CANVAS_WIDTH = 1748;
@@ -427,6 +427,11 @@ export interface CanvasSizeDef {
   // 新規作成ボタンなどで使う、向きが一目で分かるアイコン。src/core/paper.ts の
   // iconSvg と同じ作法(viewBox 0 0 32 32、その場に置くだけの小さな SVG 文字列)。
   iconSvg: string;
+  /**
+   * この寸法で新しく作った作品が最初から敷いておく「わく」のお手本(docs/manga.md)。
+   * 無ければ今まで通りわく無しで始まる。
+   */
+  initialFrame?: FramePresetId;
 }
 
 export const CANVAS_SIZES: Readonly<Record<CanvasSizeId, CanvasSizeDef>> = {
@@ -467,6 +472,10 @@ export const CANVAS_SIZES: Readonly<Record<CanvasSizeId, CanvasSizeDef>> = {
     label: [{ base: "マンガ" }],
     width: 1748,
     height: 2476,
+    // マンガの紙は 4 こまのわく付きで始める(2026-09-26 本人決定)。白紙だと
+    // はがき縦とほぼ同じ見た目になり、「マンガ」を押した甲斐がない。
+    // いらなければ「マス」の「わく」の行で「わくなし」を選び直せる。
+    initialFrame: "yonkoma",
     // はがき たて(x=8 y=3 w=16 h=26)より少し細い縦長の紙に、こま割りの下敷きになる
     // わく線を入れて「マンガ」と分かる絵にする。わく自体はこの紙に限らず「マス」から
     // 敷ける(docs/manga.md 手順3)。

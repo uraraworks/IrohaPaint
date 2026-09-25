@@ -53,7 +53,9 @@ export const FRAME_PRESETS: Readonly<Record<FramePresetId, FramePresetDef>> = {
   // 既定。わくを敷かない。
   none: {
     id: "none",
-    label: [{ base: "なし" }],
+    // マスの行にも「なし」があるため、2 つの「なし」が並ぶとどちらを押したか
+    // 分からなくなる。こちらは「わく」の行なので「わく」「なし」の 2 語にして区別する。
+    label: [{ base: "わく" }, { base: "なし" }],
     // grid.ts の off(下敷きなし)と同じ、斜線だけの絵。
     iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
       <rect x="5" y="5" width="22" height="22" rx="3" fill="#fffdf7" stroke="#3d3730"
@@ -106,6 +108,22 @@ export const FRAME_PRESETS: Readonly<Record<FramePresetId, FramePresetDef>> = {
 };
 
 export const FRAME_PRESET_ORDER: readonly FramePresetId[] = ["none", "yonkoma", "nidan"];
+
+/**
+ * 今の frame がどのお手本かを当てる(選択状態の表示・「同じお手本を押し直したら何もしない」判定に使う)。
+ * undefined(わくなし)は "none"。中身がどのお手本とも一致しなければ null を返す
+ * (将来「ゆびで きる」でお手本を崩した形になったときの受け皿)。
+ * 中身の比較は JSON.stringify でよい(FrameData は数値と文字列だけの入れ子で、
+ * キー順は const オブジェクトなので常に揃っている)。
+ */
+export function framePresetOf(frame: FrameData | undefined): FramePresetId | null {
+  if (frame === undefined) return "none";
+  for (const id of FRAME_PRESET_ORDER) {
+    const preset = FRAME_PRESETS[id];
+    if (preset.frame !== null && JSON.stringify(preset.frame) === JSON.stringify(frame)) return id;
+  }
+  return null;
+}
 
 /**
  * わくの線を ctx に描く(docs/manga.md「描画と保存」)。DOM には触らないが、Canvas 2D

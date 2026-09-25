@@ -3,6 +3,7 @@ import {
   FRAME_PRESET_ORDER,
   FRAME_PRESETS,
   framePanels,
+  framePresetOf,
   isFrameData,
   type FrameData,
 } from "../src/core/frame.ts";
@@ -266,5 +267,30 @@ describe("FRAME_PRESET_ORDER", () => {
   it("none を先頭に、全 id を含む", () => {
     expect(FRAME_PRESET_ORDER[0]).toBe("none");
     expect(new Set(FRAME_PRESET_ORDER)).toEqual(new Set(Object.keys(FRAME_PRESETS)));
+  });
+});
+
+describe("framePresetOf", () => {
+  it("全お手本は自分の id を返す", () => {
+    for (const id of FRAME_PRESET_ORDER) {
+      expect(framePresetOf(FRAME_PRESETS[id].frame ?? undefined)).toBe(id);
+    }
+  });
+
+  it("undefined は none", () => {
+    expect(framePresetOf(undefined)).toBe("none");
+  });
+
+  it("お手本と違う中身(sizes を変えたもの)は null", () => {
+    const frame: FrameData = {
+      ...FRAME_PRESETS.yonkoma.frame!,
+      root: {
+        kind: "split",
+        axis: "y",
+        sizes: [1, 1, 1, 2],
+        children: [{ kind: "leaf" }, { kind: "leaf" }, { kind: "leaf" }, { kind: "leaf" }],
+      },
+    };
+    expect(framePresetOf(frame)).toBeNull();
   });
 });

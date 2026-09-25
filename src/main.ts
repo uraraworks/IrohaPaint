@@ -28,7 +28,14 @@ import {
   type WorkRecord,
 } from "./core/model.ts";
 import { createWorkStore, requestPersistentStorage } from "./core/workStore.ts";
-import { drawFrame, type FrameData } from "./core/frame.ts";
+import {
+  drawFrame,
+  FRAME_PRESET_ORDER,
+  FRAME_PRESETS,
+  framePresetOf,
+  type FrameData,
+  type FramePresetId,
+} from "./core/frame.ts";
 import { clampPlacement, scaleAt, UNDERLAY_ALPHA, MAX_UNDERLAYS, type UnderlayOpacity, type UnderlayRecord } from "./core/underlay.ts";
 import { importUnderlay, UnderlayImportError, type UnderlayImportErrorCode } from "./core/underlayImport.ts";
 import { createUnderlayStore, pruneUnderlays, type UnderlayStore } from "./core/underlayStore.ts";
@@ -257,6 +264,8 @@ class App {
    */
   private readonly paperTextureCache = new Map<PaperKind, HTMLCanvasElement | OffscreenCanvas | null>();
   private paperRow!: HTMLElement;
+  /** 「マス」パネルの一番下に出す、わく(コマ割り)のお手本を選ぶ行(docs/manga.md)。 */
+  private frameRow!: HTMLElement;
   /** 起動時に復元する下敷き ID(復元後は this.underlayRecord が正)。 */
   private underlayId: string | null = null;
   /** 選んでいる下敷き写真の実体。無ければ写真モードでも何も描かない。 */
@@ -998,6 +1007,36 @@ class App {
     return row;
   }
 
+  /**
+   * 「わく」(コマ割り)のお手本を選ぶ行(docs/manga.md)。紙の行(createPaperRow)と
+   * 同じ作り(nib-button を並べるだけ)にして、操作を覚え直させない。
+   * 紙・マス・わくは互いに独立した軸なので、3 行とも同時に選択状態を持てる。
+   */
+  private createFrameRow(): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "frame-row";
+    // ツールバー・下敷きの帯と同じく、入りきらないものは横に流す(makeHScrollPanelRow のコメント参照)。
+    const { track } = makeHScrollPanelRow(row);
+    for (const id of FRAME_PRESET_ORDER) {
+      const def = FRAME_PRESETS[id];
+      const button = document.createElement("button");
+      button.className = "nib-button";
+      button.dataset.frame = id;
+      const icon = document.createElement("span");
+      icon.className = "icon";
+      icon.innerHTML = def.iconSvg;
+      const label = document.createElement("span");
+      label.className = "label";
+      label.appendChild(renderRuby(def.label));
+      button.append(icon, label);
+      button.setAttribute("aria-label", plainText(def.label));
+      button.addEventListener("click", () => this.setFramePreset(id));
+      track.appendChild(button);
+    }
+    this.frameRow = row;
+    return row;
+  }
+
   /** 紙の種類を切り替える。開いている作品にも記録して保存する。 */
   private setPaperKind(kind: PaperKind): void {
     this.paperKind = kind;
@@ -1200,6 +1239,9 @@ class App {
     panel.element.appendChild(this.underlayStrip);
     // 濃さ3段階 + うごかす。帯とおなじく flex-basis:100% で独立した行にする(CSS 側)。
     panel.element.appendChild(this.createUnderlayOpacityRow());
+    // わく(コマ割り)の行。パネルの一番下に置く(写真の帯・濃さの行より後ろ)。
+    // 写真の帯はすぐ上の「写真」ボタンの下に出てほしいので、間に割り込ませない。
+    panel.element.appendChild(this.createFrameRow());
     return panel;
   }
 
@@ -2220,18 +2262,38 @@ class App {
     this.surface.setPixelated(this.gridMode === "dot");
     // 写真の下敷きは、下敷きが実際にあるときだけ見せる。
     this.underlayCanvas.classList.toggle("is-on", this.gridMode === "photo" && this.underlayRecord !== null);
-    // ツールバーのボタンには、いま選んでいる下敷きの絵を出す。
-    const button = this.buttons.get("grid");
-    button?.classList.toggle("is-active", this.gridMode !== "off");
-    const icon = button?.querySelector(".icon");
-    if (icon != null) icon.innerHTML = GRID_MODES[this.gridMode].iconSvg;
     for (const element of this.gridPanel.element.querySelectorAll<HTMLElement>(".grid-mode-row .nib-button")) {
       element.classList.toggle("is-active", element.dataset.grid === this.gridMode);
     }
+    // ツールバーの「マス」ボタンの見た目(is-active・アイコン)を揃える。
+    // syncFrameLayer() からも(帯の再読み込み等を走らせずに)この部分だけ呼べるよう、
+    // 小さい関数に切り出す。
+    this.syncGridButtonAppearance();
     // gridMode が変わるたびに帯の表示・非表示も追従させる(ここが唯一の入口)。
     void this.refreshUnderlayStrip();
     this.syncUnderlayOpacityRow();
     this.syncUnderlayToggle();
+  }
+
+  /**
+   * ツールバーの「マス」ボタンの見た目だけを揃える(syncGridButtons の一部を切り出したもの)。
+   * 「マス」はマスの下敷きが選ばれているときだけでなく、わくがあるときも点灯させる
+   * (docs/manga.md「決めたこと:画面」)。アイコンは gridMode があればそちらを優先し、
+   * gridMode が off でわくだけあるときは、そのお手本のアイコン(framePresetOf が null な
+   * 崩れた形のときは 4 こまのアイコンで代用する)を出す。
+   */
+  private syncGridButtonAppearance(): void {
+    const button = this.buttons.get("grid");
+    const hasFrame = this.currentFrame !== undefined;
+    button?.classList.toggle("is-active", this.gridMode !== "off" || hasFrame);
+    const icon = button?.querySelector(".icon");
+    if (icon == null) return;
+    if (this.gridMode === "off" && hasFrame) {
+      const presetId = framePresetOf(this.currentFrame) ?? "yonkoma";
+      icon.innerHTML = FRAME_PRESETS[presetId].iconSvg;
+    } else {
+      icon.innerHTML = GRID_MODES[this.gridMode].iconSvg;
+    }
   }
 
   // --- 写真の下敷き -------------------------------------------------------
@@ -3574,6 +3636,50 @@ class App {
       this.frameCanvas.classList.remove("is-on");
       this.surface.setOverprint(null);
     }
+    // わくが変わる経路はすべてここを通るので、選択状態の同期もここに乗せる。
+    this.syncFrameButtons();
+    this.syncGridButtonAppearance();
+  }
+
+  /** 「わく」の行(.frame-row)の選択状態(is-active)を今の currentFrame に揃える。 */
+  private syncFrameButtons(): void {
+    const activeId = framePresetOf(this.currentFrame);
+    for (const element of this.frameRow.querySelectorAll<HTMLElement>(".nib-button")) {
+      element.classList.toggle("is-active", element.dataset.frame === activeId);
+    }
+  }
+
+  /**
+   * お手本を選んでわくを切り替える(docs/manga.md「決めたこと:画面」)。
+   * コマごとに持つので、今のページだけを差し替える(他のページには触らない)。
+   * 「わく」は戻る(undo)の対象にしない(押し直せば済むし、履歴に混ぜると
+   * 「戻る」で枠が消えて子どもが驚くため)。パネルはマスと同じく開いたままにする。
+   */
+  private setFramePreset(id: FramePresetId): void {
+    if (this.work === null) return;
+    // 同じお手本を押し直しても何もしない(framePresetOf で今の中身と比べる)。
+    if (framePresetOf(this.currentFrame) === id) return;
+    const page = currentPageOf(this.work);
+    if (page === undefined) return;
+    const frame = FRAME_PRESETS[id].frame ?? undefined;
+    const pages = this.work.pages.map((p) => {
+      if (p.id !== page.id) return p;
+      if (frame === undefined) {
+        const { frame: _dropped, ...withoutFrame } = p;
+        return withoutFrame;
+      }
+      return { ...p, frame };
+    });
+    this.work = { ...this.work, pages };
+    // 画素は変わらないが frame が変わるので、必ず scheduleSave() を通す
+    // (通さないと保存されない。docs/manga.md「描画と保存」)。
+    this.syncFrameLayer(frame);
+    this.scheduleSave();
+    // パラパラ中は、コマの帯の今のコマの札を新しい絵(わく込み)で描き直す。
+    // save() 自体はコマの帯を更新しないので、描いた後(afterHistoryChange 相当)と
+    // 同じ呼び出しをここでもする。
+    if (this.frameStripVisible) void this.syncFrameStrip();
+    this.sound.play(id === "none" ? "shu" : "poko");
   }
 
   /**
@@ -3666,8 +3772,12 @@ class App {
     const size = CANVAS_SIZES[sizeId];
     this.applyCanvasSize(size.width, size.height);
     this.surface.reset();
-    // 前の作品のわくが新しい白紙に焼き込まれないように、toPng() の前に外す。
-    this.syncFrameLayer(undefined);
+    // 前の作品のわくを引き継がず、この寸法の初期わく(size.initialFrame。無ければわく無し)に
+    // 切り替えてから焼く(2026-09-26: マンガの紙は 4 こまのわく付きで始める。docs/manga.md)。
+    // toPng() より前に切り替えるので、保存の絵にもわくが入る。
+    const initial = size.initialFrame;
+    const frame = initial ? FRAME_PRESETS[initial].frame ?? undefined : undefined;
+    this.syncFrameLayer(frame);
     // 空の作品をこの場で作って開いた状態にする。
     // 「あたらしく かく」を押した時点で一覧に 1 枚増えていないと、描く前に閉じた子の絵が迷子になる。
     this.work = createWork(
@@ -3677,6 +3787,11 @@ class App {
       size.width,
       size.height,
     );
+    // 作った 1 ページ目にも同じわくを持たせる(コマごとに持つので、Surface 側の
+    // 見た目(frameCanvas)と PageData.frame がずれないようにする)。
+    if (frame !== undefined) {
+      this.work = { ...this.work, pages: this.work.pages.map((p) => ({ ...p, frame })) };
+    }
     this.applyWorkPaper();
     // 新しく描き始めた作品もスマホ/タブレットに合わせた最初の見え方から始める。
     this.applyInitialView();
