@@ -347,7 +347,7 @@ describe("workStore の readRow(封筒の振り分け)", () => {
   });
 });
 
-describe("CANVAS_SIZES(将来のサイズ選択用の表・まだ未使用)", () => {
+describe("CANVAS_SIZES(作品一覧「あたらしく かく」のサイズ選択用の表)", () => {
   it("表の全項目が CANVAS_SIZE_ORDER に過不足なく並ぶ", () => {
     expect(CANVAS_SIZE_ORDER.length).toBe(Object.keys(CANVAS_SIZES).length);
     for (const id of CANVAS_SIZE_ORDER) expect(CANVAS_SIZES[id].id).toBe(id);

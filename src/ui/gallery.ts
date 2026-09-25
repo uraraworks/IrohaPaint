@@ -289,17 +289,15 @@ export class Gallery {
   }
 
   /**
-   * 「あたらしい」を「はがき よこ」「はがき たて」の2ボタンに分ける。
+   * 「あたらしい」を「はがき よこ」「はがき たて」「マンガ」の3ボタンに分ける。
    * 選択パネルを挟まず1タップで作れるようにする(ユーザー決定事項)。
-   * グリッドの1列にはめ込むと横幅で2枠使ってしまい狭い画面で縦積みになるため、
-   * grid-column を全幅に広げた行の中に2つ並べる(gallery-new-row、CSS側で対応)。
+   * グリッドの1列にはめ込むと横幅で3枠使ってしまい狭い画面で縦積みになるため、
+   * grid-column を全幅に広げた行の中に3つ並べる(gallery-new-row、CSS側で対応)。
    */
   private createNewRow(): HTMLElement {
     const row = document.createElement("div");
     row.className = "gallery-new-row";
     for (const id of CANVAS_SIZE_ORDER) {
-      // マンガ原稿は縦横比の調整が別途必要なので、今回のボタンには出さない。
-      if (id === "manga-b4") continue;
       const def = CANVAS_SIZES[id];
       const card = createLabeledButton("gallery-card gallery-new", def.iconSvg, def.label);
       card.addEventListener("click", () => this.handlers.onCreate(id));

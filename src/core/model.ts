@@ -410,10 +410,10 @@ export function currentPageOf(work: WorkRecord): PageData | undefined {
   return work.pages.find((page) => !page.deleted) ?? work.pages[0];
 }
 
-// ── 選べるキャンバスサイズの表(未使用) ──────────────────────────────
+// ── 選べるキャンバスサイズの表 ──────────────────────────────
 //
-// まだどこからも使わない。将来「新しい作品」でサイズを選べるようにする際に、
-// この表から選んで createWork() の canvasWidth/canvasHeight に渡す想定。
+// 作品一覧の「あたらしく かく」で、この表から選んで createWork() の
+// canvasWidth/canvasHeight に渡す。
 // GRID_MODES(src/core/grid.ts)と同じ作り方: id をキーにした Readonly<Record> +
 // 表示順を別に持つ配列。
 
@@ -463,14 +463,20 @@ export const CANVAS_SIZES: Readonly<Record<CanvasSizeId, CanvasSizeDef>> = {
   // 実寸の縦横比(364:257 ≒ 1.4163)はそのまま保ち、画素数だけ他の枠と揃える。
   "manga-b4": {
     id: "manga-b4",
-    label: [{ base: "マンガ原稿", ruby: "まんがげんこう" }],
+    // ボタンに出す名前。「マンガ原稿」は長いので「マンガ」だけにする。
+    label: [{ base: "マンガ" }],
     width: 1748,
     height: 2476,
-    // まだ導線がどこからも無いので、縦長アイコンを仮に流用しておく
-    // (実際にボタンを出すときは比率調整とあわせて描き直す想定)。
+    // はがき たて(x=8 y=3 w=16 h=26)より少し細い縦長の紙に、こま割りの下敷きになる
+    // わく線を入れて「マンガ」と分かる絵にする。わく自体はこの紙に限らず「マス」から
+    // 敷ける(docs/manga.md 手順3)。
     iconSvg: `<svg viewBox="0 0 32 32" aria-hidden="true">
-      <rect x="9" y="3" width="14" height="26" rx="2" fill="#fffdf7" stroke="#3d3730"
+      <rect x="8.5" y="3" width="15" height="26" rx="2" fill="#fffdf7" stroke="#3d3730"
         stroke-width="2.4"/>
+      <rect x="10.5" y="6" width="5" height="8" fill="none" stroke="#3d3730" stroke-width="1.4"/>
+      <rect x="16.5" y="6" width="5" height="8" fill="none" stroke="#3d3730" stroke-width="1.4"/>
+      <rect x="10.5" y="16" width="5" height="8" fill="none" stroke="#3d3730" stroke-width="1.4"/>
+      <rect x="16.5" y="16" width="5" height="8" fill="none" stroke="#3d3730" stroke-width="1.4"/>
     </svg>`,
   },
 };

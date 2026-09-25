@@ -1902,14 +1902,19 @@ ruby > rt {
   gap: 14px;
 }
 
-/* 「あたらしい」は白紙そのものに見せる(何が起きるか絵で分かる)。 */
+/* 「あたらしい」は白紙そのものに見せる(何が起きるか絵で分かる)。
+   3つ並ぶので幅の下限を外し(min-width: 0)、狭い画面でも押し縮められて
+   ラベルが折り返さず収まるようにする。 */
 .gallery-new {
   flex: 1 1 0;
+  min-width: 0;
   align-items: center;
   justify-content: center;
   gap: 8px;
   min-height: 140px;
-  font-size: 17px;
+  padding-left: 8px;
+  padding-right: 8px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--ink);
   border: 4px dashed var(--line);
@@ -1923,15 +1928,15 @@ ruby > rt {
 }
 
 /* 「あたらしい」カードのアイコンだけは大きく見せる(白紙そのものに見せたい)。
-   2つ並ぶぶん、1個だった頃(72px)より少し小さくして狭い画面でも窮屈にしない。 */
+   3つ並ぶぶん、1個だった頃(72px)より少し小さくして狭い画面でも窮屈にしない。 */
 .gallery-new .btn-icon {
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
 }
 
 .gallery-new .btn-icon svg {
-  width: 56px;
-  height: 56px;
+  width: 48px;
+  height: 48px;
 }
 
 .gallery-empty {
