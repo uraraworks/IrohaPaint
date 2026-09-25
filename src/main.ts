@@ -28,6 +28,7 @@ import {
   type WorkRecord,
 } from "./core/model.ts";
 import { createWorkStore, requestPersistentStorage } from "./core/workStore.ts";
+import { drawFrame, type FrameData } from "./core/frame.ts";
 import { clampPlacement, scaleAt, UNDERLAY_ALPHA, MAX_UNDERLAYS, type UnderlayOpacity, type UnderlayRecord } from "./core/underlay.ts";
 import { importUnderlay, UnderlayImportError, type UnderlayImportErrorCode } from "./core/underlayImport.ts";
 import { createUnderlayStore, pruneUnderlays, type UnderlayStore } from "./core/underlayStore.ts";
@@ -193,6 +194,17 @@ class App {
    */
   private readonly playbackCanvas: HTMLCanvasElement;
   private readonly playbackCtx: CanvasRenderingContext2D | null;
+  /**
+   * マンガの「わく」(コマ割り。docs/manga.md)を描く専用キャンバス。パラパラの「コマ」とは
+   * 別物(呼び名がかぶるので注意): こちらは 1 ページの中を割る枠線。
+   * onionCanvas と同じく紙のキャンバスには一切描かないが、Surface.setOverprint() で
+   * 「合成に重ねる 1 枚」としても渡すので、画面に見せる canvas そのものが保存・書き出し・
+   * ぬりつぶしの境界判定にも使われる(syncFrameLayer() 参照。別々に描くとずれるため)。
+   */
+  private readonly frameCanvas: HTMLCanvasElement;
+  private readonly frameCtx: CanvasRenderingContext2D | null;
+  /** いま frameCanvas に描いているわく。無ければ undefined(わく無し)。 */
+  private currentFrame: FrameData | undefined;
   /**
    * 置く操作中だけ出す、画面全体を覆う canvas。
    * 写真を紙の外まで(はみ出し込みで)画面座標で描き、ドラッグ・ピンチもここで拾う
@@ -518,6 +530,14 @@ class App {
     // 再生中だけ pointer-events を有効にする(style.css の .playback-layer.is-on)ので、
     // 紙(canvas.paper)より手前でタップを受け止められる。押されたら止める。
     this.playbackCanvas.addEventListener("pointerdown", () => this.stopPlayback());
+    // マンガの「わく」(docs/manga.md)。onionCanvas 等と同じく実ピクセルは
+    // canvasWidth x canvasHeight にして CSS で紙いっぱいへ伸ばす。DOM 上の置き場所は
+    // 組み立ての最後(仮インク(overlay)を挿した直後)で決める(insertBefore 周りのコメント参照)。
+    this.frameCanvas = document.createElement("canvas");
+    this.frameCanvas.className = "frame-layer";
+    this.frameCanvas.width = this.canvasWidth;
+    this.frameCanvas.height = this.canvasHeight;
+    this.frameCtx = this.frameCanvas.getContext("2d");
     // 紙の質感の層。写真の下敷きと同じく実ピクセルを canvasWidth x canvasHeight で作り
     // CSS で紙と同じ大きさへ伸ばす。mix-blend-mode: multiply で重ねる(画面フィルタの
     // 「よる」と同じ仕組み)。
@@ -596,7 +616,11 @@ class App {
     // 紙の見た目が変わらない)。再生中は描けない(pointer-events で紙より手前に立つ)ので、
     // 仮インク(overlay)より前でも後でも見た目に影響しない。
     this.paperWrap.insertBefore(this.playbackCanvas, this.surface.overlay);
-    // 重なり順: 紙 → 見る(再生) → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → うすく(前のコマ) → 方眼。
+    // わく(frameCanvas)は仮インク(overlay)の直後、つまり全部のかさねより上に置く。
+    // Surface.restack() は上のかさねを overlay の "直前" に差し込むので、overlay の
+    // 後ろに置けば常にかさねより上へ来る(z-index は付けない。DOM 順で重ねる原則のまま)。
+    this.paperWrap.insertBefore(this.frameCanvas, this.surface.overlay.nextSibling);
+    // 重なり順: 紙 → 見る(再生) → 仮インク(overlay) → わく → 紙テクスチャ → 下敷き写真 → うすく(前のコマ) → 方眼。
     // 方眼はマス目の目安なので常に一番上に見えていてほしい。紙の質感は絵そのものの一部と
     // いう位置づけで下敷き(写真)より下、仮インクより上に置く。
     // うすく(onionCanvas)は「今のコマの上に乗算で重ねる」ものなので、紙(paper)・仮インク
@@ -751,8 +775,10 @@ class App {
     // .paper-wrap に残り続けて作り直すたびに積み上がるので、Surface 側にまとめて外させる。
     this.surface.detach();
     this.surface = new Surface(this.paperCanvas, width, height);
-    // 重なり順は組み立て時と同じ: 紙 → 仮インク(overlay) → 紙テクスチャ → 下敷き写真 → 方眼。
-    this.paperWrap.insertBefore(this.surface.overlay, this.paperTextureCanvas);
+    // 重なり順は組み立て時と同じ: 紙 → 仮インク(overlay) → わく → 紙テクスチャ → 下敷き写真 → 方眼。
+    // overlay は frameCanvas の "前" に入れる(frameCanvas より上に来てしまうと、
+    // わくが仮インクの下に隠れてしまう)。
+    this.paperWrap.insertBefore(this.surface.overlay, this.frameCanvas);
 
     this.underlayCanvas.width = width;
     this.underlayCanvas.height = height;
@@ -760,6 +786,8 @@ class App {
     this.onionCanvas.height = height;
     this.playbackCanvas.width = width;
     this.playbackCanvas.height = height;
+    this.frameCanvas.width = width;
+    this.frameCanvas.height = height;
     this.paperTextureCanvas.width = width;
     this.paperTextureCanvas.height = height;
     // 紙テクスチャは寸法込みで焼くので、寸法が変わったキャッシュは使い回せない。
@@ -768,6 +796,9 @@ class App {
 
     this.sizeMinimapCanvas();
     this.applyCanvasSizeStyle();
+    // 新しい Surface は overprint を持たないので、いまのわくを渡し直す
+    // (渡し忘れると寸法を変えた途端、保存の絵からわくが消える)。
+    this.syncFrameLayer(this.currentFrame);
   }
 
   // --- 組み立て ---------------------------------------------------------
@@ -1703,6 +1734,9 @@ class App {
   private enterPlaybackMode(): void {
     this.playbackCanvas.classList.add("is-on");
     this.onionCanvas.classList.remove("is-on");
+    // 再生は各コマの焼き込み済みの絵(わく込み)を出すので、今のコマのわくが上に
+    // 重なると他のコマとずれて見える。再生中だけ frameCanvas を隠す。
+    this.frameCanvas.classList.add("is-playing");
     this.playbackButton?.classList.add("is-active");
     this.playbackButton?.setAttribute("aria-pressed", "true");
   }
@@ -1710,6 +1744,7 @@ class App {
   /** enterPlaybackMode() を巻き戻す。「うすく」は syncOnion() で元の状態に揃え直す。 */
   private exitPlaybackMode(): void {
     this.playbackCanvas.classList.remove("is-on");
+    this.frameCanvas.classList.remove("is-playing");
     this.playbackButton?.classList.remove("is-active");
     this.playbackButton?.setAttribute("aria-pressed", "false");
     this.syncOnion();
@@ -3228,7 +3263,13 @@ class App {
     try {
       await this.save(); // ①
       if (this.work === null) return;
-      const currentId = currentPageOf(this.work)?.id;
+      const currentPage = currentPageOf(this.work);
+      const currentId = currentPage?.id;
+      // 新しいコマは「今のコマのわく」を引き継ぐ(コマ割りの中で動きを描くのが自然で、
+      // コマごとに敷き直させないため。docs/manga.md「描画と保存」)。syncFrameLayer() は
+      // 呼ばない: 今の frameCanvas/overprint がそのまま見えていて、reset() はかさねの
+      // 画素だけを白紙にするので overprint(=わく)には触らず、toPng() にもそのまま乗る。
+      const currentFrame = currentPage?.frame;
       this.surface.reset(); // ②
 
       const pageId = createId("page"); // ③
@@ -3242,6 +3283,7 @@ class App {
         layers,
         activeLayerId: this.surface.activeLayerId,
         versionId: createId("ver"),
+        ...(currentFrame === undefined ? {} : { frame: currentFrame }),
       };
 
       const insertAt = this.work.pages.findIndex((p) => p.id === currentId); // ④
@@ -3517,12 +3559,36 @@ class App {
   }
 
   /**
+   * わく(docs/manga.md)を frameCanvas に描き直し、Surface へも「合成に重ねる 1 枚」として
+   * 渡し直す。1 つの canvas を「画面に見せる層」と「合成に重ねる 1 枚」の両方に使う
+   * (別々に描くと、画面の見た目と保存・書き出しの絵とでわくの線がずれる事故になる)。
+   */
+  private syncFrameLayer(frame: FrameData | undefined): void {
+    this.currentFrame = frame;
+    if (frame !== undefined && this.frameCtx !== null) {
+      drawFrame(this.frameCtx, frame, this.canvasWidth, this.canvasHeight);
+      this.frameCanvas.classList.add("is-on");
+      this.surface.setOverprint(this.frameCanvas);
+    } else {
+      this.frameCtx?.clearRect(0, 0, this.canvasWidth, this.canvasHeight);
+      this.frameCanvas.classList.remove("is-on");
+      this.surface.setOverprint(null);
+    }
+  }
+
+  /**
    * 保存されたページ 1 枚を Surface へ描き戻す。
    * レイヤーがあればそのまま組み直し、無い(壊れている)ときだけ合成結果 1 枚に落とす。
+   *
+   * syncFrameLayer() は restoreLayers()/restoreFrom() の "後" に呼ぶ。どちらも
+   * composite()(＝わくを含む合成)は使わず、保存されていた画素をそのまま Surface へ
+   * 描き戻すだけなので、前後どちらでも結果は変わらない。ならば後にしておけば、
+   * 「描き戻した後の絵に、そのページのわくを重ねる」という順番が素直に読める。
    */
   private async restorePage(page: PageData): Promise<void> {
     if (page.layers.length > 0) await this.surface.restoreLayers(page.layers, page.activeLayerId);
     else await this.surface.restoreFrom(page.image);
+    this.syncFrameLayer(page.frame);
   }
 
   /**
@@ -3600,6 +3666,8 @@ class App {
     const size = CANVAS_SIZES[sizeId];
     this.applyCanvasSize(size.width, size.height);
     this.surface.reset();
+    // 前の作品のわくが新しい白紙に焼き込まれないように、toPng() の前に外す。
+    this.syncFrameLayer(undefined);
     // 空の作品をこの場で作って開いた状態にする。
     // 「あたらしく かく」を押した時点で一覧に 1 枚増えていないと、描く前に閉じた子の絵が迷子になる。
     this.work = createWork(
@@ -3633,6 +3701,8 @@ class App {
         // ここは「捨てたら1枚も残らなかった」ときの穴埋めなので、向きを選ばせず既定寸法(横)にする。
         this.applyCanvasSize(CANVAS_WIDTH, CANVAS_HEIGHT);
         this.surface.reset();
+        // ここも createWork() と同じ理由で、白紙を焼く前に前の作品のわくを外す。
+        this.syncFrameLayer(undefined);
         this.work = createWork(await this.surface.toPng(), Date.now(), await this.surface.toThumbnail());
         await this.store.put(this.work);
       } else {
@@ -3687,7 +3757,10 @@ class App {
       const layerImages = await this.surface.toLayerImages();
       const layers = layerImages.map((layer) => ({ ...layer, deleted: false }));
       const activeLayerId = this.surface.activeLayerId;
-      const bake = (base: { id: string; deleted: boolean }): PageData => ({
+      // base を PageData で受ける(id・deleted だけでなく frame も持ち回す)。
+      // frame を通さないと、今のコマだけ焼き直す自動保存のたびにわくが消えてしまう
+      // (画素は変わらなくても、bake() が PageData を丸ごと作り直すため)。
+      const bake = (base: Pick<PageData, "id" | "deleted" | "frame">): PageData => ({
         id: base.id,
         image: png,
         deleted: base.deleted,
@@ -3695,6 +3768,7 @@ class App {
         activeLayerId,
         // 絵を焼き直すたびに新しい版(docs/page-versions.md「版 ID の規則」)。
         versionId: createId("ver"),
+        ...(base.frame === undefined ? {} : { frame: base.frame }),
       });
       let matched = false;
       let pages = work.pages.map((p) => {

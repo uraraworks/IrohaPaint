@@ -107,6 +107,27 @@ export const FRAME_PRESETS: Readonly<Record<FramePresetId, FramePresetDef>> = {
 
 export const FRAME_PRESET_ORDER: readonly FramePresetId[] = ["none", "yonkoma", "nidan"];
 
+/**
+ * わくの線を ctx に描く(docs/manga.md「描画と保存」)。DOM には触らないが、Canvas 2D
+ * の ctx だけを扱う純粋な描画関数なので、木から矩形を出す framePanels() と同じ frame.ts に置く。
+ *
+ * コマの中・外は塗らない(strokeRect だけ)。線の中心をコマの縁に乗せる(縁の内も外も
+ * 半分ずつ線がはみ出す形。わくの外(余白)にも描けるので、内側だけに寄せる必要はない)。
+ */
+export function drawFrame(ctx: CanvasRenderingContext2D, frame: FrameData, width: number, height: number): void {
+  ctx.clearRect(0, 0, width, height);
+  const short = Math.min(width, height);
+  const lineWidthPx = frame.lineWidth * short;
+  ctx.save();
+  ctx.strokeStyle = "#000000";
+  ctx.lineWidth = lineWidthPx;
+  ctx.lineJoin = "miter";
+  for (const panel of framePanels(frame, width, height)) {
+    ctx.strokeRect(panel.x, panel.y, panel.width, panel.height);
+  }
+  ctx.restore();
+}
+
 /** コマ 1 つの矩形(px)。整数に丸める必要はない。 */
 export interface PanelRect {
   x: number;

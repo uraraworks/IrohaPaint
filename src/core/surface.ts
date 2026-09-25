@@ -174,6 +174,14 @@ export class Surface {
    */
   private thumbnailScratch: [HTMLCanvasElement, HTMLCanvasElement] | null = null;
 
+  /**
+   * わく(コマ割り。docs/manga.md)の線。かさねの画素には入れず、見えている合成結果の
+   * 一番上に重ねるだけの 1 枚として持つ。これで保存の絵・サムネイル・書き出し・
+   * ぬりつぶしの境界・スポイトが全部同じわくを見る(かさねごとに焼き込むと、
+   * 後からお手本を変えたときに古い線が画素として残ってしまう)。
+   */
+  private overprint: CanvasImageSource | null = null;
+
   /** この Surface が扱うキャンバスの画素寸法。作品ごとに違いうるので固定定数にしない。 */
   readonly width: number;
   readonly height: number;
@@ -1155,6 +1163,15 @@ export class Surface {
   }
 
   /**
+   * わく(docs/manga.md)を合成の一番上に重ねる 1 枚として渡す。null で外す。
+   * 1 つの canvas を「画面に見せる層」と「ここで合成に重ねる 1 枚」の両方に使う
+   * (main.ts の syncFrameLayer() 参照。別々に描くとずれるため)。
+   */
+  setOverprint(source: CanvasImageSource | null): void {
+    this.overprint = source;
+  }
+
+  /**
    * 全レイヤーを下から順に 1 枚へ焼いて合成する。紙の色は塗らない(呼び出し側が従来通り塗る)。
    * アクティブなレイヤーだけは控え canvas ではなく this.canvas(= 画素の実体)を使う。
    *
@@ -1163,8 +1180,15 @@ export class Surface {
    * その場合アクティブな 1 枚(=上のレイヤー)だけを見ると囲みが無く紙全体に
    * 漏れてしまう(スポイトも下の色を吸えない)。見えているもの(合成結果)で
    * 判定し、書き込み先だけはいま選んでいる 1 枚に絞るのが正しい。
+   *
+   * withOverprint=true(既定)なら、かさねを重ねた後にわく(overprint)を最後に重ねる。
+   * これで保存の絵・サムネイル・書き出し・ぬりつぶしの境界・スポイトが全部同じわくを見る。
+   * **flattenVisibleLayers() だけは false で呼ぶ**: あちらはかさね本体を合成結果で
+   * 焼き直す処理なので、わくを混ぜるとわくの線がかさねの画素になってしまい、
+   * 消しゴムで消えるようになり、しかもお手本を変えて保存するたびに古い線が
+   * 二重に(かさねの画素として)残ってしまう。
    */
-  private composite(): HTMLCanvasElement {
+  private composite(withOverprint = true): HTMLCanvasElement {
     const flat = document.createElement("canvas");
     flat.width = this.width;
     flat.height = this.height;
@@ -1175,6 +1199,10 @@ export class Surface {
       if (!layer.visible) continue;
       ctx.globalAlpha = layer.opacity;
       ctx.drawImage(i === this.activeIndex ? this.canvas : layer.canvas, 0, 0);
+    }
+    if (withOverprint && this.overprint !== null) {
+      ctx.globalAlpha = 1;
+      ctx.drawImage(this.overprint, 0, 0);
     }
     return flat;
   }
@@ -1216,7 +1244,10 @@ export class Surface {
 
     // 畳む前に合成する(this.layers・activeIndex を変える前でないと、
     // composite() がアクティブなかさねの画素を this.canvas から正しく拾えない)。
-    const flat = this.composite();
+    // withOverprint=false: ここはかさね本体を焼き直す処理なので、わくを混ぜると
+    // わくの線がかさねの画素になり、消しゴムで消えるようになってしまう(composite() の
+    // コメント参照)。
+    const flat = this.composite(false);
 
     const bottom = this.layers[0] as LayerSlot;
     // 残す 1 枚以外は DOM からも外す(collapseToSingleLayer() と同じ後始末)。
