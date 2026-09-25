@@ -69,17 +69,23 @@
 ## データ
 
 - `PageData.frame?: FrameData` … 無ければ枠なし（今までの作品はすべて無し）
-- `FrameData` は **割った木**で持つ。お手本もこの木の出来合い：
+- `FrameData` は **割った木**で持つ（`src/core/frame.ts`）。お手本もこの木の出来合い：
   ```
   FrameNode =
     | { kind: "leaf" }
-    | { kind: "split"; dir: "h" | "v"; at: number /* 0..1 */; children: [FrameNode, FrameNode] }
-  FrameData = { margin: number /* 紙に対する割合 */; gutter: number; root: FrameNode }
+    | { kind: "split"; axis: "x" | "y"; sizes: number[] /* 比 */; children: FrameNode[] }
+  FrameData = { margin; gapRow; gapCol; lineWidth; root }  // どれも紙の短辺に対する割合
   ```
-  - 木にしておく理由：「ゆびで きる」は葉に split を 1 つ挿すだけで届く。
-    お手本の id だけ持つと、後で切れるようにしたとき形が変わる
+  - 1 つの split で **n 個に分ける**。間を先に引いてから比で分けるので、等比ならぴったり等分になる。
+    最初は「at の位置で 2 つに割る」入れ子にしたが、割るたびに間を引くせいで 4 こまの高さが
+    下ほど低くなった（2026-09-26 に直した）
+  - 木にしておく理由：「ゆびで きる」は葉を 2 個分けの split に差し替える（か、親の split に子を
+    1 つ挿す）だけで届く。お手本の id だけ持つと、後で切れるようにしたとき形が変わる
+  - `framePanels()` はコマをマンガの読み順（上の段から、同じ段は右から左）で返す
+- `frame` は **版（`PageVersion`）の側**に持つ。わくを変えると絵を焼き直して新しい版になるので、
+  絵と同じ単位で持つのが筋。読み込みで `isFrameData()` に通らない値は捨てる
 - 線の太さ・余白・間隔は割合で持ち、描くときに紙の大きさへ換算する
-  （横の間隔 > 縦の間隔。段の間を広く取るのがマンガの読み順の目印）
+  （段と段の間 `gapRow` を、左右のコマの間 `gapCol` より広く取る。これがマンガの読み順の目印）
 - `splitWork` / `joinWork` は項目を並べているので、`frame` を必ず通す（パラパラのときの教訓）
 - 控え（`WorkSnapshot`）は `PageData` ごと持つので、枠も一緒に戻る
 

@@ -4,6 +4,7 @@
 // 古い形の読み込み(assignLegacyVersionIds)・掃除の判断(unreferencedVersionIds)を
 // vitest だけで固めるため(vitest には IndexedDB が無い)。
 import { createId, type LayerData, type PageData, type WorkRecord, type WorkSnapshot } from "./model.ts";
+import { isFrameData, type FrameData } from "./frame.ts";
 
 /** 封筒(StoredEnvelope.version)の値。版を別の箱に置く形。 */
 export const ENVELOPE_VERSION = 2;
@@ -22,6 +23,11 @@ export interface PageVersion {
   image: Blob;
   layers: LayerData[];
   activeLayerId?: string;
+  /**
+   * わく(コマ割り)は版の側に持つ: お手本を変えると絵を焼き直して新しい版になるので、
+   * 絵と同じ単位で持つ(docs/manga.md)。
+   */
+  frame?: FrameData;
   createdAt: number;
 }
 
@@ -70,6 +76,7 @@ function pageToVersion(workId: string, page: PageData, now: number): PageVersion
     image: page.image,
     layers: page.layers,
     ...(page.activeLayerId === undefined ? {} : { activeLayerId: page.activeLayerId }),
+    ...(page.frame === undefined ? {} : { frame: page.frame }),
     createdAt: now,
   };
 }
@@ -117,6 +124,9 @@ export function splitWork(work: WorkRecord, now: number): { stored: StoredWork; 
 }
 
 function refToPage(ref: StoredPageRef, version: PageVersion): PageData {
+  // 読めない frame で描画が壊れないよう、isFrameData で確かめて外れていたら落とす
+  // (unwrap() の layers 補完と同じ考え方)。
+  const frame = isFrameData(version.frame) ? version.frame : undefined;
   return {
     id: ref.id,
     deleted: ref.deleted,
@@ -124,6 +134,7 @@ function refToPage(ref: StoredPageRef, version: PageVersion): PageData {
     image: version.image,
     layers: version.layers,
     ...(version.activeLayerId === undefined ? {} : { activeLayerId: version.activeLayerId }),
+    ...(frame === undefined ? {} : { frame }),
   };
 }
 

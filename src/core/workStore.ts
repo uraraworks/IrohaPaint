@@ -14,6 +14,7 @@ import {
   type WorkRecord,
 } from "./model.ts";
 import { isPaperKind } from "./paper.ts";
+import { isFrameData } from "./frame.ts";
 import {
   assignLegacyVersionIds,
   ENVELOPE_VERSION,
@@ -158,11 +159,18 @@ export function unwrap(raw: unknown): WorkRecord | null {
     paperKind: isPaperKind(work.paperKind) ? work.paperKind : "plain",
     // パラパラより前に保存されたデータには animation が無い。false(パラパラでない)を補う。
     animation: typeof work.animation === "boolean" ? work.animation : false,
-    pages: work.pages.map((page: PageData) => ({
-      ...page,
-      deleted: page.deleted ?? false,
-      layers: Array.isArray(page.layers) && page.layers.length > 0 ? page.layers : defaultLayers(page.id, page.image),
-    })),
+    pages: work.pages.map((page: PageData) => {
+      // 読めない frame(壊れたデータ)で描画が壊れないよう、isFrameData で確かめて外れていたら落とす。
+      const { frame: _rawFrame, ...rest } = page;
+      const frame = isFrameData(page.frame) ? page.frame : undefined;
+      return {
+        ...rest,
+        deleted: page.deleted ?? false,
+        layers:
+          Array.isArray(page.layers) && page.layers.length > 0 ? page.layers : defaultLayers(page.id, page.image),
+        ...(frame === undefined ? {} : { frame }),
+      };
+    }),
   };
   // 封筒 1(この関数が読む唯一の形)は読むたびに versionId を振り直す
   // (docs/page-versions.md「版 ID の規則」参照。封筒 2 の読み込みは readRow() が扱う)。

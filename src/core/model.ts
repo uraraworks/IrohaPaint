@@ -17,6 +17,7 @@
 //   - ページにもソフトデリートを通す(deleted)。作品と同じ「本当には消さない」規則。
 import type { LabelPart } from "./tools.ts";
 import type { PaperKind } from "./paper.ts";
+import type { FrameData } from "./frame.ts";
 
 /** 印刷(ポストカード 148x100mm / 300dpi)を見据えた固定キャンバスサイズ。横向き。 */
 export const CANVAS_WIDTH = 1748;
@@ -189,6 +190,13 @@ export interface PageData {
    * 版 ID。中身が同じ間は同じ、中身が違えば必ず別。docs/page-versions.md 参照。
    */
   versionId: string;
+  /**
+   * マンガの「わく」(コマ割り)。無ければわく無し(今までの作品はすべて無し)。
+   * マス(下敷き、grid.ts)と違い絵に焼き込むが、かさねの画素ではなく別に持つ
+   * (消しゴムで消えない・後からお手本を変えられる・ぬりつぶしの境界になる)。
+   * docs/manga.md 参照。
+   */
+  frame?: FrameData;
 }
 
 /**

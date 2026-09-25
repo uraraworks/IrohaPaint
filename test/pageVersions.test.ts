@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createId, createWork, type PageData, type WorkRecord, type WorkSnapshot } from "../src/core/model.ts";
+import { FRAME_PRESETS, type FrameData } from "../src/core/frame.ts";
 import {
   assignLegacyVersionIds,
   joinWork,
@@ -81,6 +82,43 @@ describe("splitWork / joinWork の往復", () => {
 
     expect(versions.length).toBe(1);
     expect(versions[0]?.versionId).toBe(shared.versionId);
+  });
+});
+
+describe("splitWork / joinWork と frame(わく)", () => {
+  it("frame 付きのページは往復しても frame が残る", () => {
+    const frame = FRAME_PRESETS.yonkoma.frame!;
+    const work = createWork(blob(), 1000);
+    const framedPage: PageData = { ...work.pages[0]!, frame };
+    const withFrame: WorkRecord = { ...work, pages: [framedPage] };
+
+    const { stored, versions } = splitWork(withFrame, 3000);
+    const restored = joinWork(stored, versionsMap(versions));
+
+    expect(restored?.pages[0]?.frame).toEqual(frame);
+    expect(restored).toEqual(withFrame);
+  });
+
+  it("frame 無しのページは往復しても frame 自体が無いまま", () => {
+    const work = createWork(blob(), 1000);
+
+    const { stored, versions } = splitWork(work, 3000);
+    const restored = joinWork(stored, versionsMap(versions));
+
+    expect(restored?.pages[0]?.frame).toBeUndefined();
+    expect("frame" in (restored?.pages[0] ?? {})).toBe(false);
+  });
+
+  it("不正な frame は joinWork で落ちる(版に混ざっていても読めない)", () => {
+    const brokenFrame = { margin: -1 } as unknown as FrameData;
+    const work = createWork(blob(), 1000);
+    const framedPage: PageData = { ...work.pages[0]!, frame: brokenFrame };
+    const withFrame: WorkRecord = { ...work, pages: [framedPage] };
+
+    const { stored, versions } = splitWork(withFrame, 3000);
+    const restored = joinWork(stored, versionsMap(versions));
+
+    expect(restored?.pages[0]?.frame).toBeUndefined();
   });
 });
 
