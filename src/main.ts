@@ -10,6 +10,7 @@ import "./style.css";
 import { BEAD_COLORS, CRAYON_COLORS, ERASER_SIZES, nearestBeadColor, PEN_SIZES } from "./core/palette.ts";
 import { NIB_DEFS, NIB_ORDER, type NibId } from "./core/brush.ts";
 import { cellsFor, GRID_MODES, GRID_MODE_ORDER, type GridMode } from "./core/grid.ts";
+import { patternTile, PATTERNS, PATTERN_ORDER, type PatternId } from "./core/pattern.ts";
 import { createPaperTexture, PAPER_KINDS, PAPER_KIND_ORDER, type PaperKind } from "./core/paper.ts";
 import {
   appendSnapshot,
@@ -266,6 +267,8 @@ class App {
   private paperRow!: HTMLElement;
   /** 「マス」パネルの一番下に出す、わく(コマ割り)のお手本を選ぶ行(docs/manga.md)。 */
   private frameRow!: HTMLElement;
+  /** 「塗る」パネルの 2 行目、もよう(トーン)を選ぶ行(docs/manga.md)。 */
+  private patternRow!: HTMLElement;
   /** 起動時に復元する下敷き ID(復元後は this.underlayRecord が正)。 */
   private underlayId: string | null = null;
   /** 選んでいる下敷き写真の実体。無ければ写真モードでも何も描かない。 */
@@ -477,6 +480,12 @@ class App {
    * 押した場所と結果が必ず一致する(バケツをこぼす、という素朴な期待どおりに動く)。
    */
   private fillMode: FillMode = "area";
+
+  /**
+   * 「塗る」の中身のもよう(トーン、docs/manga.md)。既定は solid(もようなし=今までどおりの
+   * べた塗り)。保存はしない(起動時は常に "もようなし" から始まる)。
+   */
+  private fillPattern: PatternId = "solid";
 
   /**
    * 「しかく」「まる」でなぞっている最中の状態。触っていなければ null。
@@ -1142,6 +1151,7 @@ class App {
       track.appendChild(button);
     }
     panel.element.appendChild(row);
+    panel.element.appendChild(this.createPatternRow());
     return panel;
   }
 
@@ -1158,6 +1168,54 @@ class App {
     if (icon !== null && icon !== undefined) {
       icon.innerHTML = this.fillMode === "area" ? (TOOL_DEFS.fill.iconSvg ?? "") : FILL_MODE_DEFS[this.fillMode].iconSvg;
     }
+  }
+
+  /**
+   * 「塗る」パネルの 2 行目、もよう(トーン)を選ぶ行(docs/manga.md「決めたこと:トーン」)。
+   * かこみ/しかく/まる の行(上の row)と同じ作り(nib-button を並べるだけ)にして、
+   * 押したときの振る舞いも揃える(パネルは閉じず、「塗る」を選んだ状態にして音を鳴らす)。
+   * もようは色と違い「置く」というより「選ぶ」感覚なので音は solid だけ通常の "shu"、
+   * それ以外は他の一覧選びと同じ "poko" にする。
+   */
+  private createPatternRow(): HTMLElement {
+    const row = document.createElement("div");
+    row.className = "pattern-row";
+    const { track } = makeHScrollPanelRow(row);
+    for (const id of PATTERN_ORDER) {
+      const def = PATTERNS[id];
+      const button = document.createElement("button");
+      button.className = "nib-button";
+      button.dataset.pattern = id;
+      const icon = document.createElement("span");
+      icon.className = "icon";
+      icon.innerHTML = def.iconSvg;
+      const label = document.createElement("span");
+      label.className = "label";
+      label.appendChild(renderRuby(def.label));
+      button.append(icon, label);
+      button.setAttribute("aria-label", plainText(def.label));
+      button.addEventListener("click", () => {
+        this.fillPattern = id;
+        this.setActiveTool("fill");
+        this.syncPatternButtons();
+        this.sound.play(id === "solid" ? "shu" : "poko");
+      });
+      track.appendChild(button);
+    }
+    this.patternRow = row;
+    return row;
+  }
+
+  /**
+   * もようの行の選択状態(is-active)を揃える。マス目に吸着するモード(this.cellGrid !== null、
+   * ビーズ・ドット絵)ではもようが効かない(今までどおりのべた塗り)ので、行ごと薄くする
+   * (押せなくはしない。docs/manga.md「決めたこと:トーン」)。
+   */
+  private syncPatternButtons(): void {
+    for (const element of this.patternRow.querySelectorAll<HTMLElement>(".nib-button")) {
+      element.classList.toggle("is-active", element.dataset.pattern === this.fillPattern);
+    }
+    this.patternRow.classList.toggle("is-dim", this.cellGrid !== null);
   }
 
   private createGridPanel(): Panel {
@@ -2023,6 +2081,7 @@ class App {
         this.setActiveTool("fill");
         // 塗り方(かこみ / しかく / まる)を選べるようにする。ペンの太さと同じ扱い。
         this.fillPanel.toggle(button);
+        this.syncPatternButtons();
         this.sound.play("poko");
         break;
       case "undo":
@@ -2273,6 +2332,8 @@ class App {
     void this.refreshUnderlayStrip();
     this.syncUnderlayOpacityRow();
     this.syncUnderlayToggle();
+    // マス目に吸着するモードに切り替わったら、もようの行も薄くする(docs/manga.md)。
+    this.syncPatternButtons();
   }
 
   /**
@@ -2742,6 +2803,9 @@ class App {
         }
 
         if (this.activeTool === "fill") {
+          // マス目に吸着するモードでは、もようは効かず今までどおりのべた塗り
+          // (docs/manga.md「決めたこと:トーン」)。
+          const tile = this.cellGrid === null ? patternTile(this.fillPattern, this.color) : null;
           if (isShapeMode(this.fillMode)) {
             // なぞって範囲を決める。指を離すまでは仮の層に下見を出すだけで、絵は変えない。
             this.shapeDrag = { id, mode: this.fillMode, x: point.x, y: point.y, endX: point.x, endY: point.y };
@@ -2753,6 +2817,7 @@ class App {
               point.y,
               this.color,
               this.cellGrid,
+              tile,
             );
             return;
           }
@@ -2760,7 +2825,7 @@ class App {
           const cellGrid = this.cellGrid;
           const rect = cellGrid !== null
             ? this.surface.fillCells(cellGrid, point.x, point.y, this.color)
-            : this.surface.fill(point.x, point.y, hexToRgba(this.color));
+            : this.surface.fill(point.x, point.y, hexToRgba(this.color), tile);
           if (rect !== null) {
             this.surface.commit(rect);
             this.sound.play("shu");
@@ -2794,7 +2859,8 @@ class App {
           if (drag.id !== id) return;
           drag.endX = point.x;
           drag.endY = point.y;
-          this.surface.previewShape(drag.mode, drag.x, drag.y, point.x, point.y, this.color, this.cellGrid);
+          const tile = this.cellGrid === null ? patternTile(this.fillPattern, this.color) : null;
+          this.surface.previewShape(drag.mode, drag.x, drag.y, point.x, point.y, this.color, this.cellGrid, tile);
           return;
         }
         if (!this.lastPoints.has(id)) return;
@@ -2848,6 +2914,7 @@ class App {
         if (drag !== null) {
           if (drag.id !== id) return;
           this.shapeDrag = null;
+          const tile = this.cellGrid === null ? patternTile(this.fillPattern, this.color) : null;
           const rect = this.surface.fillShape(
             drag.mode,
             drag.x,
@@ -2856,6 +2923,7 @@ class App {
             drag.endY,
             this.color,
             this.cellGrid,
+            tile,
           );
           if (rect !== null) {
             this.surface.commit(rect);

@@ -1319,13 +1319,24 @@ ruby > rt {
  */
 .paper-row,
 .grid-mode-row,
-.frame-row {
+.frame-row,
+.pattern-row {
   position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   flex-basis: 100%;
   min-width: 0;
+}
+
+/*
+ * もよう(トーン)の行(docs/manga.md)。マス目に吸着するモード(ビーズ・ドット絵)では
+ * もようが効かず、今までどおりのべた塗りになる。押せなくはしない(押しても何も
+ * 起きないだけで、選んだ状態は覚えておく)ので、disabled にはせず見た目だけ薄くする
+ * (.tool-button.is-dim / .layer-strip-add.is-dim と同じ opacity)。
+ */
+.pattern-row.is-dim {
+  opacity: 0.35;
 }
 
 /*

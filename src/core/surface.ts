@@ -1285,8 +1285,15 @@ export class Surface {
    * 0 で上書きしてしまい、そのレイヤーの既存の絵が矩形ごと消える。
    * 一時 canvas に一度置いてから drawImage(source-over) で重ねることで、
    * 塗っていない画素は透明のまま素通りし、下の絵を消さずに済む。
+   *
+   * tile を渡すと、塗る中身が色のべた塗りではなくもよう(トーン)になる。out を
+   * patch へ置いた直後は「塗る範囲がべたで入っている」状態なので、
+   * globalCompositeOperation = "source-in" にしてから塗った矩形(rect)だけ tile の
+   * パターンで fillRect すると、"塗る範囲の形" は out のまま、中身だけ tile に差し替わる。
+   * パターンの原点はキャンバスの (0,0)(patch はキャンバスと同じ大きさで変換なし)なので、
+   * 隣り合う領域を別々に塗っても、もようの点の並びがずれずに繋がる。
    */
-  fill(x: number, y: number, color: Rgba): FillRect | null {
+  fill(x: number, y: number, color: Rgba, tile: CanvasImageSource | null = null): FillRect | null {
     this.revealActiveLayerIfHidden();
     const flat = this.composite();
     const flatCtx = flat.getContext("2d");
@@ -1302,6 +1309,12 @@ export class Surface {
     const patchCtx = patch.getContext("2d");
     if (patchCtx === null) throw new Error("2D コンテキストを取得できませんでした");
     patchCtx.putImageData(new ImageData(out, this.width, this.height), 0, 0);
+    if (tile !== null) {
+      patchCtx.globalCompositeOperation = "source-in";
+      patchCtx.fillStyle = patchCtx.createPattern(tile, "repeat") ?? "";
+      patchCtx.fillRect(rect.x, rect.y, rect.width, rect.height);
+      patchCtx.globalCompositeOperation = "source-over";
+    }
 
     this.ctx.globalCompositeOperation = "source-over";
     this.ctx.drawImage(
@@ -1318,10 +1331,21 @@ export class Surface {
    * 半透明にしたり枠線だけにしたりはしない。押す前に見えているものと、指を離した
    * あとに残るものが違うと、子どもは「押したら変わった」と受け取ってしまう。
    */
-  previewShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, cells: CellGrid | null): void {
+  previewShape(
+    mode: ShapeMode,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    color: string,
+    cells: CellGrid | null,
+    tile: CanvasImageSource | null = null,
+  ): void {
     this.clearShapePreview();
     const box = shapeBox(x0, y0, x1, y1, this.width, this.height);
-    const rect = this.paintShape(this.overlayCtx, mode, box, color, cells);
+    // 下見と出来上がりは同じ見た目にする(押す前に見えているものと、離したあとに残る
+    // ものが違うと子どもが戸惑うため)。もようもここで下見に出す。
+    const rect = this.paintShape(this.overlayCtx, mode, box, color, cells, tile);
     // 消す範囲は 1px 広めに取る(縁のアンチエイリアスが残らないように)。
     if (rect !== null) {
       this.shapePreviewDirty = {
@@ -1345,20 +1369,37 @@ export class Surface {
    * 「しかく」「まる」で塗る。なぞった 2 点が対角になる枠に収める。
    * 色の境界を一切見ないので、線が切れていても、ビーズの隙間があっても漏れない。
    */
-  fillShape(mode: ShapeMode, x0: number, y0: number, x1: number, y1: number, color: string, cells: CellGrid | null): FillRect | null {
+  fillShape(
+    mode: ShapeMode,
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+    color: string,
+    cells: CellGrid | null,
+    tile: CanvasImageSource | null = null,
+  ): FillRect | null {
     this.revealActiveLayerIfHidden();
     this.clearShapePreview();
     const box = shapeBox(x0, y0, x1, y1, this.width, this.height);
-    return this.paintShape(this.ctx, mode, box, color, cells);
+    return this.paintShape(this.ctx, mode, box, color, cells, tile);
   }
 
-  /** 形を 1 つ描く。塗った矩形を返す(何も塗らなければ null)。 */
+  /**
+   * 形を 1 つ描く。塗った矩形を返す(何も塗らなければ null)。
+   *
+   * tile はマス目モード(cells !== null)では効かない(ビーズ/ドット絵はもよう非対応。
+   * docs/manga.md「決めたこと:トーン」)。ctx(this.ctx / this.overlayCtx)はどちらも
+   * キャンバスと同じ大きさ・変換なしなので、パターンの原点(キャンバスの (0,0))が
+   * そのまま揃う。
+   */
   private paintShape(
     ctx: CanvasRenderingContext2D,
     mode: ShapeMode,
     box: FillRect,
     color: string,
     cells: CellGrid | null,
+    tile: CanvasImageSource | null = null,
   ): FillRect | null {
     if (box.width <= 0 || box.height <= 0) return null;
     if (cells !== null) {
@@ -1369,7 +1410,7 @@ export class Surface {
     }
     ctx.save();
     ctx.globalCompositeOperation = "source-over";
-    ctx.fillStyle = color;
+    ctx.fillStyle = tile !== null ? ctx.createPattern(tile, "repeat") ?? color : color;
     if (mode === "rect") {
       ctx.fillRect(box.x, box.y, box.width, box.height);
     } else {
